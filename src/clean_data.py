@@ -1,19 +1,10 @@
 import pandas as pd
 from nameparser import HumanName
 import spacy
+from utils.clean_names import remove_non_person_contributors_and_export
 
 # Load the multilingual NER model
 nlp = spacy.load("xx_ent_wiki_sm")
-
-def is_person_name(name):
-    # Process the name with spaCy
-    doc = nlp(name)
-    # Check if any entity is labeled as a person
-    is_person = any(ent.label_ == "PER" for ent in doc.ents)
-    if not is_person:
-        # If not a person, add to the removed list
-        removed_contributors.append(name)
-    return is_person
 
 def format_name_to_lastname_initials(name):
     human_name = HumanName(name)
@@ -36,11 +27,8 @@ pairs_raw = pairs_raw.convert_dtypes() # make sure all integer columns are integ
 # remove duplicates
 pairs_filtered = pairs_raw.drop_duplicates() 
 # remove contributors that aren't people
-pairs_filtered = pairs_filtered[pairs_filtered['contributor'].apply(is_person_name)]
-
-# pipe removed contributors into a csv file
-removed_contributors_df = pd.DataFrame(removed_contributors, columns=['non_person_contributors'])
-removed_contributors_df.to_csv("../data/removed_contributors.csv", index=False)
+csv_path = "../data/removed_contributors.csv"
+pairs_filtered = remove_non_person_contributors_and_export(pairs_filtered, csv_path, nlp)
 
 # Standardize names
 pairs_std = pairs_filtered
