@@ -1,4 +1,5 @@
 *.csv
 *.pyc
+.ipynb_checkpoints
 
 __pychache__
