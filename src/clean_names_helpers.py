@@ -1,5 +1,6 @@
 import pandas as pd
 from nameparser import HumanName
+from tqdm.notebook import tqdm  # Import tqdm for Jupyter Notebook
 
 def remove_non_person_contributors_and_export(df, csv_path, nlp, whitelist=[], blacklist=[]):
     global removed_contributors
@@ -17,7 +18,9 @@ def remove_non_person_contributors_and_export(df, csv_path, nlp, whitelist=[], b
             removed_contributors.append(name)
         return is_person
 
-    filtered_df = df[df['contributor'].apply(is_person_name)]
+    # Wrap df['contributor'].apply in tqdm
+    tqdm.pandas(desc="Removing invalid contributors")
+    filtered_df = df[df['contributor'].progress_apply(is_person_name)]
 
     if removed_contributors:  # Only export if there are names to export
         removed_contributors_df = pd.DataFrame(removed_contributors, columns=['non_person_contributors'])
