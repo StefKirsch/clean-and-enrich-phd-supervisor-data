@@ -27,4 +27,10 @@
    pip install -r requirements.txt
    ```
 
+6. **Install multilingual spacy model**
+
+```sh
+pipenv run python -m spacy download xx_ent_wiki_sm
+```
+
 6. **Place raw data in `data/raw`** to run the notebook.
