@@ -1,6 +1,8 @@
 import pandas as pd
 from nameparser import HumanName
 from tqdm.notebook import tqdm  # Import tqdm for Jupyter Notebook
+import spacy
+from spacy.cli import download
 
 def remove_non_person_contributors_and_export(df, csv_path, nlp, whitelist=[], blacklist=[]):
     global removed_contributors
@@ -39,3 +41,27 @@ def format_name_to_lastname_initials(name):
     # Combine last name and initials
     formatted_name = f"{last_name}, {initials}" if initials else last_name
     return formatted_name.strip()
+
+
+def ensure_spacy_model(model_name):
+    """
+    Ensures that the specified spaCy model is downloaded and loaded.
+    
+    Parameters:
+    model_name (str): The name of the spaCy model to check and download if necessary.
+    
+    Returns:
+    nlp (Language): The spaCy Language object for the specified model.
+    """
+    try:
+        # Try loading the model
+        nlp = spacy.load(model_name)
+        print(f"{model_name} is already installed.")
+    except OSError:
+        # If the model is not found, download it
+        print(f"{model_name} not found, downloading...")
+        download(model_name)
+        # Load the model after downloading
+        nlp = spacy.load(model_name)
+        print(f"{model_name} has been successfully downloaded and loaded.")
+    return nlp
