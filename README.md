@@ -1,36 +1,64 @@
 # Clean and enrich PhD supervisor data
 
+## Prerequisites
+
+Before you begin, ensure you have met the following requirements:
+
+- You have installed [Anaconda](https://www.anaconda.com/products/individual) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
+
 ## Setup
 
 1. **Clone or download your project** to your local machine.
 
-2. **Navigate to the project directory** in the terminal or command prompt.
+2. **Place raw data in `data/raw`** to run the notebook.
 
-3. **Create a virtual environment** within the project directory by running:
+3. **Navigate to the project directory** in the terminal or command prompt.
+
+4. **Set up the environment**
+
+You can do this via the Anaconda navigator or via the Anaconda Promot Terminal
+
+### Using Anaconda Navigator
+
+a) **Import the Environment:**
+
+- Open Anaconda Navigator.
+- Go to the "Environments" tab.
+- Click on "Import" at the bottom.
+- In the Import dialog, click the folder icon and select the `enrich-phd-sup-data-conda-env.yaml` file from this repository.
+- Click "Import".
+
+b) **Activate the Environment:**
+
+- Once the environment has been created, you can activate it by selecting it in the "Environments" tab.
+- To launch tools like Jupyter notebooks, switch to the "Home" tab, select the environment from the dropdown menu, and click the "Launch" button next to the tool you want to use.
+
+### Using the Console
+
+a) **Create the Environment:**
+   Open a terminal or command prompt and navigate to the directory containing this project. Then, run the following command:
+
    ```sh
-   python3 -m venv env
+   conda env create -f enrich-phd-sup-data-conda-env.yaml
    ```
-   This command creates a directory named `env` where the virtual environment files are stored.
 
-4. **Activate the virtual environment**:
-   - On macOS/Linux:
-     ```sh
-     source env/bin/activate
-     ```
-   - On Windows:
-     ```cmd
-     .\env\Scripts\activate
-     ```
+b) **Activate the Environment:**
+   To activate the newly created environment, use:
 
-5. **Install the dependencies** listed in your `requirements.txt` file by running:
    ```sh
-   pip install -r requirements.txt
+   conda activate enrich-phd-sup-data-conda-env
    ```
 
-6. **Install multilingual spacy model**
+c) **Run Jupyter Notebook** by typing
+
+   ```sh
+   jupyter notebook
+   ```
+
+5. **Install multilingual spacy model**
 
 ```sh
-pipenv run python -m spacy download xx_ent_wiki_sm
+download xx_ent_wiki_sm
 ```
 
 6. **Place raw data in `data/raw`** to run the notebook.
