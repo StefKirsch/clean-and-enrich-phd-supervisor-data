@@ -2,13 +2,11 @@
 
 ## Prerequisites
 
-Before you begin, ensure you have met the following requirements:
-
-- You have installed [Anaconda](https://www.anaconda.com/products/individual) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
+[Anaconda](https://www.anaconda.com/products/individual) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 
 ## Setup
 
-1. **Clone or download your project** to your local machine.
+1. **Clone or download the repository** to your local machine.
 
 2. **Place raw data in `data/raw`** to run the notebook.
 
@@ -54,11 +52,3 @@ c) **Run Jupyter Notebook** by typing
    ```sh
    jupyter notebook
    ```
-
-5. **Install multilingual spacy model**
-
-```sh
-download xx_ent_wiki_sm
-```
-
-6. **Place raw data in `data/raw`** to run the notebook.
