@@ -14,10 +14,10 @@ def remove_non_person_contributors_and_export(df, csv_path, nlp, whitelist=[], b
             return True
         if name in blacklist:
             return False
-        doc = nlp(name)
-        is_person = any(ent.label_ == "PER" for ent in doc.ents)
+        doc = nlp(name) # process with model
+        is_person = any(ent.label_ == "PER" for ent in doc.ents) # check if any named entitties is a person
         if not is_person:
-            removed_contributors.append(name)
+            removed_contributors.append(name) # add removed entry to log
         return is_person
 
     # Wrap df['contributor'].apply in tqdm
