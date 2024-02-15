@@ -104,3 +104,5 @@ dependencies:
   - xz=5.4.5=h8cc25b3_0
   - zeromq=4.3.5=hd77b12b_0
   - zlib=1.2.13=h8cc25b3_0
+  - pip:
+      - xx-ent-wiki-sm==3.7.0
