@@ -43,7 +43,7 @@ def format_name_to_lastname_initials(name):
     return formatted_name.strip()
 
 
-def ensure_spacy_model(model_name):
+def ensure_and_load_spacy_model(model_name):
     """
     Ensures that the specified spaCy model is downloaded and loaded.
     
@@ -63,5 +63,6 @@ def ensure_spacy_model(model_name):
         download(model_name)
         # Load the model after downloading
         nlp = spacy.load(model_name)
-        print(f"{model_name} has been successfully downloaded and loaded.")
+        print(f"{model_name} has been successfully downloaded.")
+    print(f"{model_name} has been loaded!")
     return nlp
