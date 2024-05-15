@@ -43,6 +43,14 @@ def format_name_to_lastname_initials(name):
     return formatted_name.strip()
 
 
+def format_initials(initials):
+    # Split the string into a list of initials
+    initials_list = initials.split()
+    # Format each initial with a period
+    formatted_initials = '.'.join(initials_list) + '.'
+    return formatted_initials
+
+
 def ensure_and_load_spacy_model(model_name):
     """
     Ensures that the specified spaCy model is downloaded and loaded.
