@@ -56,8 +56,8 @@ pubs_sample
 # %%
 # create pairs (author, title) for each row of the df
 def author_title_pairs_lst(df):
-    for index, row in df.iterrows():
     tuples_list = []                                             
+    for _, row in df.iterrows():
         tuple_values = (row['author_name'], row['title'])
         tuples_list.append(tuple_values)
     return tuples_list
