@@ -37,7 +37,9 @@ NROWS = None # None for all
 # ## Reading (and sampling) the data
 
 # %% [markdown]
-# `biomedical_data.csv` is a subset of the original dataset containing publications __from the last 5 years__ and from __biomedical institutions only__ - amcpub, lumc, vumc, umcu. It contains 1856 records.
+# `biomedical_pubs.csv` is a subset of the original dataset containing publications __from the last 5 years__ and from __biomedical institutions only__ - amcpub, lumc, vumc, umcu. It contains 1856 records.
+# 
+# In the code the first two contributors are considered (as potential supervisors) - `contributors_lst(df)` takes a specific numer of columns of a `df` - can be changed if needed.
 
 # %%
 pubs_sample = pd.read_csv("data/cleaned/biomedical_pubs.csv")
@@ -81,7 +83,7 @@ contributors_list = contributors_lst(pubs_sample)
 # ## Find the author
 
 # %% [markdown]
-# #### Get pubs from our df
+# #### Get pubs from our dataframe
 
 # %%
 def get_name(row):                                                     # needs a row of the pubs df
