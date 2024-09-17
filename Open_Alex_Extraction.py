@@ -69,8 +69,8 @@ author_title_pairs
 # %%
 # create lists of contributors for each row of the df
 def contributors_lst(df):
-    contributors_list = []                                       # create lists of contributors for each row of the df
     for index, row in df.iloc[:, 7:18].iterrows():
+    contributors_list = []                                       
         contributors = []
         for value in row:
             if type(value) != float:
