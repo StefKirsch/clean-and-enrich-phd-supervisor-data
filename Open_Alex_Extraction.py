@@ -54,9 +54,10 @@ pubs_sample = pubs_sample.sample(n=n_sample, random_state=40).reset_index(drop=T
 pubs_sample
 
 # %%
+# create pairs (author, title) for each row of the df
 def author_title_pairs_lst(df):
-    tuples_list = []                                             # create pairs (author, title) for each row of the df
     for index, row in df.iterrows():
+    tuples_list = []                                             
         tuple_values = (row['author_name'], row['title'])
         tuples_list.append(tuple_values)
     return tuples_list
