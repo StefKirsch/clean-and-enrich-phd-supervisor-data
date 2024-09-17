@@ -87,7 +87,19 @@ contributors_list = contributors_lst(pubs_sample)
 # #### Get pubs from our dataframe
 
 # %%
-def get_name(row):                                                     # needs a row of the pubs df
+def name2initials_comma_surname(row):                                                     # needs a row of the pubs df
+    """
+    Takes a row from a DataFrame and converts the author's name
+    into the format "Initials. Surname".
+    Accepts names in both "Surname, Initials" and "Initials Surname" formats, adding spaces
+    between initials if necessary. The resulting name is returned in the desired format.
+
+    Args:
+        row (pd.Series): A row from the DataFrame containing the author's name.
+
+    Returns:
+        str: The formatted author's name in the format "Initials. Surname".
+    """
     author = author_title_pairs[row][0]
     if "," not in author:
         surname = author.split(" ")[0]
@@ -109,7 +121,18 @@ def get_name(row):                                                     # needs a
         name = initials + " " + surname
     return name
 
-def get_name_without_spaces(row):                                      # name as it is in the pubs df
+def name2initials_surname(row):                                      # name as it is in the pubs df
+    """
+    Takes a row from a DataFrame and converts the author's name 
+    in the format "Initials Surname".
+    Accepts names in both "Surname, Initials" and "Initials Surname" formats.
+
+    Args:
+        row (pd.Series): A row from the DataFrame containing the author's name.
+
+    Returns:
+        str: The formatted author's name in the format "Initials Surname".
+    """
     author = author_title_pairs[row][0]
     if "," not in author:
         surname = author.split(" ")[0]
@@ -149,28 +172,28 @@ def confirm_author(row):                                                 # match
             if response["authorships"] == []:
                 print("No record of author for this title")
             for author in response["authorships"]:
-                if author["author"]["display_name"] == get_name(row):    # first try matching on "raw" name
-                    print(MAGENTA + "Author found! - {}".format(get_name(row)) + RESET)
+                if author["author"]["display_name"] == name2initials_comma_surname(row):    # first try matching on "raw" name
+                    print(MAGENTA + "PhD candidate found! - {}".format(name2initials_comma_surname(row)) + RESET)
                     author_id = author["author"]["id"]
                     found = True
                 if found == False:                                       # raw name matches based on the exact same string
                     q = Authors()[author["author"]["id"]]                # if not found check with ID
-                    if (q["display_name"] == get_name(row) or get_name(row) in q["display_name_alternatives"]) or (q["display_name"] == get_name_without_spaces(row) or get_name_without_spaces(row) in q["display_name_alternatives"]):
-                        print(YELLOW + "Author found! - {}".format(get_name(row)) + RESET)
+                    if (q["display_name"] == name2initials_comma_surname(row) or name2initials_comma_surname(row) in q["display_name_alternatives"]) or (q["display_name"] == name2initials_surname(row) or name2initials_surname(row) in q["display_name_alternatives"]):
+                        print(YELLOW + "PhD candidate found! - {}".format(name2initials_comma_surname(row)) + RESET)
                         author_id = author["author"]["id"]
                         found = True
-                    if (q["display_name"].lower() == get_name(row).lower() or q["display_name"].lower() == get_name_without_spaces(row).lower()):
-                        print(YELLOW + "Author found! - {}".format(get_name(row)) + RESET)
+                    if (q["display_name"].lower() == name2initials_comma_surname(row).lower() or q["display_name"].lower() == name2initials_surname(row).lower()):
+                        print(YELLOW + "PhD candidate found! - {}".format(name2initials_comma_surname(row)) + RESET)
                         author_id = author["author"]["id"]
                         found = True
                     if q["display_name_alternatives"] != []:
                         for n in q["display_name_alternatives"]:
-                            if (n.lower() == get_name(row).lower() or n.lower() == get_name_without_spaces(row).lower()):
-                                print(YELLOW + "Author found! - {}".format(get_name(row)) + RESET)
+                            if (n.lower() == name2initials_comma_surname(row).lower() or n.lower() == get_name_without_spaces(row).lower()):
+                                print(YELLOW + "PhD candidate found! - {}".format(name2initials_comma_surname(row)) + RESET)
                                 author_id = author["author"]["id"]
                                 found = True
                     if found == False:
-                        print("Could not match {} to {}".format(get_name(row), q["display_name_alternatives"]))
+                        print("Could not match {} to {}".format(name2initials_comma_surname(row), q["display_name_alternatives"]))
                 if found:
                     break
             if found:
@@ -208,10 +231,10 @@ def get_author_id(row):                                                   # retu
     if confirmed_id not in ["Confirming author not successful", "Title not matched"]:
         return confirmed_id
 
-    query = Authors().search_filter(display_name=get_name(row)).get()
+    query = Authors().search_filter(display_name=name2initials_comma_surname(row)).get()
 
     if query == []:
-        query = Authors().search_filter(display_name=get_name_without_spaces(row)).get()
+        query = Authors().search_filter(display_name=name2initials_surname(row)).get()
 
     end_message = confirmed_id
     confirmed_id = ''
@@ -219,19 +242,19 @@ def get_author_id(row):                                                   # retu
     print("{} match(es) for the author found".format(len(query)))
     for response in query:
         found = False
-        if (response["display_name"] == get_name(row) or get_name(row) in response["display_name_alternatives"]) or (response["display_name"] == get_name_without_spaces(row) or get_name_without_spaces(row) in response["display_name_alternatives"]):
-            print(BLUE + "Author found! - {}".format(get_name(row)) + RESET)
+        if (response["display_name"] == name2initials_comma_surname(row) or name2initials_comma_surname(row) in response["display_name_alternatives"]) or (response["display_name"] == name2initials_surname(row) or name2initials_surname(row) in response["display_name_alternatives"]):
+            print(BLUE + "PhD candidate found! - {}".format(name2initials_comma_surname(row)) + RESET)
             confirmed_id = response["id"]
             found = True
         else:                                                               # many other cases ! - DOUBLE SURNAMES - NOT CLEAR WAY TO HANDLE (193 on rs 42)
-            if get_name(row).lower() == response["display_name"].lower():
-                print(CYAN + "Author found! - {}".format(get_name(row)) + RESET)
+            if name2initials_comma_surname(row).lower() == response["display_name"].lower():
+                print(CYAN + "PhD candidate found! - {}".format(name2initials_comma_surname(row)) + RESET)
                 confirmed_id = response["id"]
                 found = True
-            normalized_name1 = ' '.join(sorted(get_name(row).split()))
+            normalized_name1 = ' '.join(sorted(name2initials_comma_surname(row).split()))
             normalized_name2 = ' '.join(sorted(response["display_name"].split()))
             if normalized_name1 == normalized_name2:
-                print(CYAN + "Author found! - {}".format(get_name(row)) + RESET)
+                print(CYAN + "PhD candidate found! - {}".format(name2initials_comma_surname(row)) + RESET)
                 confirmed_id = response["id"]
                 found = True
         if found:
@@ -530,8 +553,18 @@ for i in tqdm(range(len(pubs_sample))):
         count = len(author_dois)
         message_author = np.nan
 
-    data = {'Author': get_name_without_spaces(i), 'Author DOIs found in OpenAlex': author_dois, 'DOIs count': count, 'Contributors-DOIs Dictionary': contributors, 'Number of contributors with DOIs found in OpenAlex': contr_count, 'Cumulative found Contributor DOIs count': contr_dois_count, 'Why no DOIs for author': message_author, 'Why no DOIs for contributors': message_contributors}
-    dois_data.append(data)
+    # create a dictionary with all the relevant information for the current row
+    data = {
+        'PhD candidate': name2initials_surname(i),  
+        'PhD candidate DOIs found in OpenAlex': author_dois,  
+        'DOIs count': count,  
+        'Contributors-DOIs Dictionary': contributors, 
+        'Number of contributors with DOIs found in OpenAlex': contr_count, 
+        'Cumulative found Contributor DOIs count': contr_dois_count,
+        'Why no DOIs for PhD candidate': message_author,  
+        'Why no DOIs for contributors': message_contributors 
+    }
+    dois_data.append(data)  # append the dictionary to the list of data
 
 dois_df = pd.DataFrame(dois_data)
 
