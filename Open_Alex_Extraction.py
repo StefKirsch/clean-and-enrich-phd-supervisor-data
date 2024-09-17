@@ -30,6 +30,9 @@ RESET = '\033[0m'
 MAGENTA = '\033[35m'
 CYAN = '\033[36m'
 
+# Number of rows to read of the full dataset.
+NROWS = None # None for all
+
 # %% [markdown]
 # ## Reading (and sampling) the data
 
@@ -37,8 +40,16 @@ CYAN = '\033[36m'
 # `biomedical_data.csv` is a subset of the original dataset containing publications __from the last 5 years__ and from __biomedical institutions only__ - amcpub, lumc, vumc, umcu. It contains 1856 records.
 
 # %%
-df = pd.read_csv("biomedical_data.csv")
-sampled_df = df.sample(n=200, random_state=42)
+pubs_sample = pd.read_csv("data/cleaned/biomedical_pubs.csv")
+
+if NROWS == None:
+    n_sample = len(pubs_sample)
+else:
+    n_sample = NROWS
+
+pubs_sample = pubs_sample.sample(n=n_sample, random_state=40).reset_index(drop=True)
+
+pubs_sample
 
 # %%
 def author_title_pairs_lst(df):
@@ -48,6 +59,12 @@ def author_title_pairs_lst(df):
         tuples_list.append(tuple_values)
     return tuples_list
 
+author_title_pairs = author_title_pairs_lst(pubs_sample)
+
+author_title_pairs
+
+# %%
+# create lists of contributors for each row of the df
 def contributors_lst(df):
     contributors_list = []                                       # create lists of contributors for each row of the df
     for index, row in df.iloc[:, 7:18].iterrows():
@@ -58,9 +75,7 @@ def contributors_lst(df):
         contributors_list.append(contributors)
     return contributors_list
 
-# %%
-author_title_pairs = author_title_pairs_lst(sampled_df)
-contributors_list = contributors_lst(sampled_df)
+contributors_list = contributors_lst(pubs_sample)
 
 # %% [markdown]
 # ## Find the author
@@ -492,6 +507,7 @@ dois_data = []
 
 for i in tqdm(range(len(sampled_df))):
     contributors = contributors_DOIs(i)
+for i in tqdm(range(len(pubs_sample))):  
     if contributors == "None of the contributors is in Open Alex database" or contributors == "No DOIs for the associated contributors found":
         message_contributors = contributors
         contributors = np.nan
