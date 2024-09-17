@@ -1,3 +1,9 @@
+# %% [markdown]
+# # Look up publications data and contributors on Open Alex
+
+# %% [markdown]
+# ## Load Dependencies
+
 # %%
 from pyalex import Works, Authors
 import pandas as pd
@@ -6,6 +12,9 @@ import urllib.parse
 import re
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+
+# %% [markdown]
+# ## Settings and constants
 
 # %%
 # limit the number of rows that are shown with printing dataframes
