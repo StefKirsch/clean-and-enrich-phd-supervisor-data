@@ -8,7 +8,6 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # %%
-# !pip install pyalex # uncomment to install
 
 # %%
 # ANSI escape codes for colors
