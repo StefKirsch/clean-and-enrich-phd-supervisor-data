@@ -1,5 +1,5 @@
 # %%
-from pyalex import Works, Authors, Sources, Institutions, Topics, Publishers, Funders, Concepts
+from pyalex import Works, Authors
 import pandas as pd
 import numpy as np
 import urllib.parse
