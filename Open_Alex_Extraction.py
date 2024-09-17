@@ -8,6 +8,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # %%
+# limit the number of rows that are shown with printing dataframes
+pd.set_option('display.max_rows', 5)
 
 # %%
 # ANSI escape codes for colors
