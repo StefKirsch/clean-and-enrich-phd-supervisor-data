@@ -2,53 +2,67 @@
 
 ## Prerequisites
 
-[Anaconda](https://www.anaconda.com/products/individual) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
+We recommend installing Python via [Miniconda](https://docs.conda.io/en/latest/miniconda.html) for a minimal setup. This ensures an isolated and controlled Python environment. If you already have Python installed, you can skip this step.
 
 ## Setup
 
 1. **Clone or download the repository** to your local machine.
 
-2. **Place raw data in `data/raw`** to run the notebook.
+2. **Place [raw data](data/raw/README.md) in `data/raw`** to run the notebook.
 
 3. **Navigate to the project directory** in the terminal or command prompt.
 
-4. **Set up the environment**
+4. **Install the dependencies**  
+   You have two options:
 
-You can do this via the Anaconda navigator or via the Anaconda Promot Terminal
-
-### Using Anaconda Navigator
-
-a) **Import the Environment:**
-
-- Open Anaconda Navigator.
-- Go to the "Environments" tab.
-- Click on "Import" at the bottom.
-- In the Import dialog, click the folder icon and select the `enrich-phd-sup-data-conda-env.yaml` file from this repository.
-- Click "Import".
-
-b) **Activate the Environment:**
-
-- Once the environment has been created, you can activate it by selecting it in the "Environments" tab.
-- To launch tools like Jupyter notebooks, switch to the "Home" tab, select the environment from the dropdown menu, and click the "Launch" button next to the tool you want to use.
-
-### Using the Console
-
-a) **Create the Environment:**
-   Open a terminal or command prompt and navigate to the directory containing this project. Then, run the following command:
-
-   ```sh
-   conda env create -f enrich-phd-sup-data-conda-env.yaml
+### Simple Installation (No Virtual Environment)
+   If you do not wish to use a virtual environment, you can install the dependencies directly:
+   
+   ```bash
+   pip install -r requirements.txt
    ```
 
-b) **Activate the Environment:**
-   To activate the newly created environment, use:
+   This will install all the required packages directly into your current Python environment.
 
-   ```sh
-   conda activate enrich-phd-sup-data-conda-env
+### Recommended Workflow (Using a Virtual Environment)
+   It’s recommended to use `venv` to create an isolated Python environment for the project.
+
+   a) **Create a Virtual Environment:**
+
+   Run the following command to create a virtual environment in the project directory:
+   
+   ```bash
+   python -m venv venv
    ```
 
-c) **Run Jupyter Notebook** by typing
+   This will create a `venv` directory in your project.
 
-   ```sh
+   b) **Activate the Virtual Environment:**
+
+   - On Windows:
+   
+     ```bash
+     venv\Scripts\activate
+     ```
+
+   - On macOS/Linux:
+   
+     ```bash
+     source venv/bin/activate
+     ```
+
+   c) **Install Dependencies:**
+
+   With the virtual environment activated, install the required dependencies:
+   
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+5. **Run Jupyter Notebook:**
+
+   After setting up the environment and installing dependencies, start the Jupyter notebook:
+   
+   ```bash
    jupyter notebook
    ```
