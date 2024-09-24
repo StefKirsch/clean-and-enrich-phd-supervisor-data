@@ -8,7 +8,7 @@ We recommend installing Python via [Miniconda](https://docs.conda.io/en/latest/m
 
 1. **Clone or download the repository** to your local machine.
 
-2. **Place raw data in `data/raw`** to run the notebook.
+2. **Place raw data in `[data/raw](data/raw/README.md)`** to run the notebook.
 
 3. **Navigate to the project directory** in the terminal or command prompt.
 
