@@ -5,7 +5,7 @@ from pyalex import Institutions
 
 # Dictionary to map institution abbreviations to full display names
 institution_translation = {
-    'amcpub': 'Amsterdam UMC',
+    'amcpub': 'University of Amsterdam', # Might also be 'Amsterdam UMC',
     'buas': 'Breda University of Applied Sciences',
     'cwi': 'Centrum Wiskunde & Informatica',
     'eur': 'Erasmus University Rotterdam',
