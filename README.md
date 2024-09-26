@@ -66,3 +66,11 @@ We recommend installing Python via [Miniconda](https://docs.conda.io/en/latest/m
    ```bash
    jupyter notebook
    ```
+
+6. **(Optional) Use the polite pool or OpenAlex Premium**
+
+In order to use the [polite pool](https://docs.openalex.org/how-to-use-the-api/rate-limits-and-authentication#the-polite-pool), create a file `contact_email.txt` in the root folder of the project and specify your e-mail address.
+
+```contact_email.txt
+mail@example.com
+```
