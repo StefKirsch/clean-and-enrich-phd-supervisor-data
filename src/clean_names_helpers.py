@@ -30,25 +30,21 @@ def remove_non_person_contributors_and_export(df, csv_path, nlp, whitelist=[], b
 
     return filtered_df
 
-def format_name_to_lastname_initials(name):
+def format_name_to_lastname_firstname(name):
+    from nameparser import HumanName
+
     human_name = HumanName(name)
-    # Extract the last name
+    
+    # Extract the last name and first name + middle name
     last_name = human_name.last
-    # Extract the first name and/or initials
     first_names = human_name.first + ' ' + human_name.middle
-    # Convert first names to initials, keeping existing initials as is
-    initials = ''.join([f"{name[0]}." if name else '' for name in first_names.split()])
-    # Combine last name and initials
-    formatted_name = f"{last_name}, {initials}" if initials else last_name
+
+    # Combine last name and first names, giving only last name if first names are missing
+    formatted_name = f"{last_name}, {first_names}" if first_names.strip() else last_name
+
     return formatted_name.strip()
 
 
-def format_initials(initials):
-    # Split the string into a list of initials
-    initials_list = initials.split()
-    # Format each initial with a period
-    formatted_initials = '.'.join(initials_list) + '.'
-    return formatted_initials
 
 
 def ensure_and_load_spacy_model(model_name):
