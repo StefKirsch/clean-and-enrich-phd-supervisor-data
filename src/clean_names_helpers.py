@@ -30,9 +30,8 @@ def remove_non_person_contributors_and_export(df, csv_path, nlp, whitelist=[], b
 
     return filtered_df
 
-def format_name_to_lastname_firstname(name):
-    from nameparser import HumanName
 
+def format_name_to_lastname_firstname(name):
     human_name = HumanName(name)
     
     # Extract the last name and first name + middle name
@@ -43,8 +42,6 @@ def format_name_to_lastname_firstname(name):
     formatted_name = f"{last_name}, {first_names}" if first_names.strip() else last_name
 
     return formatted_name.strip()
-
-
 
 
 def ensure_and_load_spacy_model(model_name):
