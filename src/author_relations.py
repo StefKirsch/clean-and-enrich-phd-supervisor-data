@@ -251,7 +251,7 @@ class AuthorRelations:
     
     
 # Define a function to process each row
-def process_row(row):
+def find_phd_and_supervisors_in_row(row):
     # Extract necessary fields
     phd_name = row['phd_name']
     title = row['title']
