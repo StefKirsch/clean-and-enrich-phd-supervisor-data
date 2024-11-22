@@ -1,5 +1,5 @@
-# This script can be run to verify the un-abbreviation when transalting 
-# institution abbreviatrons to a name that can be found in OpenAlex
+# This script can be run to verify the un-abbreviation when translating 
+# institution abbreviations to a name that can be found in OpenAlex
 
 from pyalex import Institutions
 
