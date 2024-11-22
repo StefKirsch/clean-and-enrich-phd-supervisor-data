@@ -1,6 +1,10 @@
 import logging
 from pyalex import Authors, Works
 import pandas as pd
+from os import path, makedirs
+
+from src.io_helpers import fetch_supervisors_from_pilot_dataset
+from src.clean_names_helpers import format_name_to_lastname_firstname
 
 class AuthorRelations:
     def __init__(self, phd_name, title, year, institution, contributors, years_tolerance=0, verbosity='INFO'):
@@ -297,3 +301,76 @@ def find_phd_and_supervisors_in_row(row):
         'phd_id': results.get('phd_id') if results else None,
         'supervisor_ids': results.get('supervisor_ids') if results else None
     }
+    
+
+def fetch_author_openalex_names_ids(author: str) -> dict[str, str]:
+    """
+    Looks up a single author in OpenAlex and retrieves all matches as a dictionary.
+
+    Parameters:
+        author (str): The name of the author to search in OpenAlex.
+
+    Returns:
+        dict: A dictionary where keys are display names and values are OpenAlex IDs.
+    """
+    try:
+        search_results = Authors().search(author).get()
+
+        # Process all matches into a dictionary
+        return {
+            result['display_name']: result['id']
+            for result in search_results
+        }
+    except Exception as e:
+        print(f"Error fetching data for author '{author}': {e}")
+        return {}
+
+
+# Check if the CSV file exists and load data or query OpenAlex
+def get_supervisors_openalex_ids(repo_url, csv_path):
+    """
+    Retrieves supervisor data with OpenAlex IDs, either by reading from a CSV file or querying OpenAlex.
+
+    Parameters:
+        repo_url (str): The URL of the GitHub directory containing supervisor data.
+        csv_path (str): Path to the CSV file where supervisor data is stored.
+
+    Returns:
+        dict: A dictionary where keys are supervisor names and values are OpenAlex IDs.
+    """
+    # If the CSV file exists, load it
+    if path.exists(csv_path):
+        print(f"Loading supervisor data from {csv_path}...")
+        supervisors_df = pd.read_csv(csv_path)
+        return dict(zip(supervisors_df['supervisor_name'], supervisors_df['supervisor_id']))
+    
+    # If the CSV file does not exist, fetch data and save it
+    print(f"No existing CSV found at {csv_path}. Querying OpenAlex...")
+    
+    # Fetch the unique supervisors from the dataset
+    supervisors = fetch_supervisors_from_pilot_dataset(
+        repo_url=repo_url,
+        file_extension=".xlsx",
+        verbosity=True
+    )
+    
+    # Apply name standardization
+    supervisors_std = [format_name_to_lastname_firstname(name) for name in supervisors]
+    
+    # Query OpenAlex for each supervisor and build the dictionary
+    supervisors_ids = {
+        display_name: openalex_id
+        for supervisor in supervisors_std
+        for display_name, openalex_id in fetch_author_openalex_names_ids(supervisor).items()
+    }
+    
+    # Save the data to a CSV file
+    print(f"Saving supervisor data to {csv_path}...")
+    supervisors_df = pd.DataFrame([
+        {"supervisor_name": name, "supervisor_id": openalex_id}
+        for name, openalex_id in supervisors_ids.items()
+    ])
+    makedirs(path.dirname(csv_path), exist_ok=True)  # Ensure the directory exists
+    supervisors_df.to_csv(csv_path, index=False)
+    
+    return supervisors_ids
