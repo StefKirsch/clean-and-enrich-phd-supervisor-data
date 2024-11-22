@@ -252,6 +252,18 @@ class AuthorRelations:
     
 # Define a function to process each row
 def find_phd_and_supervisors_in_row(row):
+    """
+    Finds author relations information from a DataFrame row.
+
+    Processes the row to find the PhD candidate and potential supervisors,
+    and returns their OpenAlex IDs.
+
+    Parameters:
+        row (pd.Series): A row from the DataFrame containing publication data.
+
+    Returns:
+        dict: A dictionary with 'phd_name', 'phd_id', and 'supervisor_ids'.
+    """
     # Extract necessary fields
     phd_name = row['phd_name']
     title = row['title']
