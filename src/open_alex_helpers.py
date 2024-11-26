@@ -254,7 +254,6 @@ class AuthorRelations:
         return {'phd_id': phd_id, 'supervisor_ids': supervisor_ids}
     
     
-# Define a function to process each row
 def find_phd_and_supervisors_in_row(row):
     """
     Finds author relations information from a DataFrame row.
@@ -326,7 +325,6 @@ def fetch_author_openalex_names_ids(author: str) -> dict[str, str]:
         return {}
 
 
-# Check if the CSV file exists and load data or query OpenAlex
 def get_supervisors_openalex_ids(repo_url, csv_path):
     """
     Retrieves supervisor data with OpenAlex IDs, either by reading from a CSV file or querying OpenAlex.
