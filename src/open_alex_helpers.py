@@ -7,13 +7,19 @@ from src.io_helpers import fetch_supervisors_from_pilot_dataset
 from src.clean_names_helpers import format_name_to_lastname_firstname
 
 class AuthorRelations:
+    # Class attribute shared by all instances
+    # Can be overwritten at the class level to change the default for all (upcoming) instances in scope
+    # Keys: supervisor name 
+    # Values: supervisor OpenAlex ID
+    supervisors_in_pilot_dataset = dict()
+    
     def __init__(self, phd_name, title, year, institution, contributors, years_tolerance=0, verbosity='INFO'):
         self.phd_name = phd_name
         self.title = title
         self.year = year
         self.institution = institution
         self.contributors = contributors
-        self.years_tolerance = years_tolerance  # Changed from 'tolerance' to 'years_tolerance'
+        self.years_tolerance = years_tolerance
         self.phd_candidate = None
         self.potential_supervisors = []
         self.verbosity = verbosity.upper()
@@ -34,9 +40,9 @@ class AuthorRelations:
         if self.years_tolerance == 0:
             return [self.year]
         elif self.years_tolerance > 0:
-            return list(range(self.year, self.year + self.years_tolerance + 1))
+            return set(range(self.year, self.year + self.years_tolerance + 1))
         else:  # years_tolerance < 0
-            return list(range(self.year + self.years_tolerance, self.year + 1))
+            return set(range(self.year + self.years_tolerance, self.year + 1))
         
     def setup_logging(self):
         # Map verbosity levels to logging levels
@@ -64,7 +70,6 @@ class AuthorRelations:
 
         # Add the handler to the logger
         self.logger.addHandler(file_handler)
-
 
     def search_phd_candidate(self, criteria):
         """
@@ -111,7 +116,8 @@ class AuthorRelations:
 
     def check_affiliation(self, candidate):
         """
-        Check if the candidate has the correct affiliation in the target years.
+        Compare the affiliation of an candidate to `self.institution` in the target years.
+        Return True if it matches and False otherwise.
         """
         affiliations = candidate.get('affiliations', [])
         match_found = False
@@ -136,6 +142,28 @@ class AuthorRelations:
 
         return match_found
 
+    def get_candidate_affiliations(self, candidate, in_target_years=True):
+        """
+        Returns a set of institution names that the candidate was affiliated with.
+
+        Parameters:
+            candidate (dict): The candidate author object containing affiliation data.
+            in_target_years (bool): If True, only include affiliations within the target years.
+                                    If False, include all affiliations regardless of year.
+
+        Returns:
+            set: A set of institution names affiliated with the candidate.
+        """
+        affiliations = candidate.get('affiliations', [])
+        institutions = set()
+        for affiliation in affiliations:
+            institution_name = affiliation['institution']['display_name']
+            affiliation_years = affiliation.get('years', [])
+            
+            if not in_target_years or self.target_years.intersection(affiliation_years):
+                institutions.add(institution_name)
+        return institutions
+    
     def check_authored_work(self, candidate):
         """
         Check if the candidate has authored the specified title.
@@ -164,77 +192,99 @@ class AuthorRelations:
 
         return match_found
 
-    def get_candidate_affiliations(self, candidate):
+    def collect_supervision_metadata(self):
         """
-        Returns a set of institution names that the candidate was affiliated with in the target years.
+        Based on relationships between `self.phd_candidate` and contributors collect metadata that indicates supervision. 
+        
+        We look up contributors in OpenAlex. We confirm that we matched the contributor name with an author in OpenAlex
+        by requiring at least *one* shared affiliation in the time window (target years) of the publication of the thesis.  
+        
+        Every confirmed contributor is added to the final dataset, the only difference for them will be the metadata that we collect here
+        
+        The following metadata will be collected per confirmed contributor:
+        'is_first': contributor is mentioned as first contributor in underlying dataset -> bool
+        'grad_inst': Phd and contributor shared institution in the time window of the thesis publication -> bool
+        'n_shared_inst_grad': Number of institutions PhD candidate and contributor share at the time of graduation -> int
+        'is_sup_in_pilot_dataset': Contributor is mentioned in the pilot dataset -> bool
         """
-        affiliations = candidate.get('affiliations', [])
-        institutions = set()
-        for affiliation in affiliations:
-            institution_name = affiliation['institution']['display_name']
-            affiliation_years = affiliation.get('years', [])
-            if any(year in self.target_years for year in affiliation_years):
-                institutions.add(institution_name)
-        return institutions
-
-    def find_potential_supervisors(self):
-        """
-        Find potential supervisors among the contributors based on shared affiliations with the PhD candidate
-        in the target years.
-        """
+        
         if not self.phd_candidate:
             self.logger.warning("PhD candidate not confirmed. Cannot find potential supervisors.")
             return []
-
-        # Get PhD candidate's affiliations in target years
-        phd_affiliations = self.get_candidate_affiliations(self.phd_candidate)
-        if not phd_affiliations:
+        
+        # Get PhD candidate's affiliations
+        phd_affiliations_at_graduation = self.get_candidate_affiliations(self.phd_candidate, in_target_years=True)
+        
+        # If the PhD candidate has no affiliations in the target years, return an empty list
+        if not phd_affiliations_at_graduation:
             self.logger.warning("PhD candidate has no affiliations in target years. Cannot find potential supervisors.")
             return []
-
+        
         # Log the target institutions (affiliations of the PhD candidate in the target years)
-        self.logger.debug(f"Target Institutions: {phd_affiliations}, Target Years: {self.target_years}")
+        self.logger.debug(f"Target Institutions: {phd_affiliations_at_graduation}, Target Years: {self.target_years}")
         self.logger.info("Searching for potential supervisors among contributors.")
+        
+        # Initialize list to store supervisor data
+        self.potential_supervisors = []
 
-        for contributor_name in self.contributors:
+        for idx, contributor_name in enumerate(self.contributors):
             self.logger.debug(f"Searching for contributor: {contributor_name}")
-            # Search for contributors in OpenAlex
-            candidates = Authors().search(contributor_name).get()
-            self.logger.debug(f"Found: {len(candidates)} candidates for contributor '{contributor_name}'.")
 
-            # If no candidates are found, log and continue to next contributor
-            if not candidates:
+            # set flag for candidate being the first contributor in the underlying dataset
+            is_first = (idx == 0)
+            
+            # Search for contributors in OpenAlex
+            openalex_candidates = Authors().search(contributor_name).get()
+            self.logger.debug(f"Found: {len(openalex_candidates)} candidates for contributor '{contributor_name}'.")
+            
+            # If no candidates are found continue to next contributor
+            if not openalex_candidates:
                 self.logger.debug(f"No candidates found for contributor: {contributor_name}")
                 continue
-
-            supervisor_found = False
-            for candidate in candidates:
-                # Get supervisor's affiliations in target years
-                supervisor_affiliations = self.get_candidate_affiliations(candidate)
-
+            
+            # Prepare contributor_found_in_openalex flag
+            contributor_found_in_openalex = False
+            
+            for candidate in openalex_candidates:
+                # Get all affiliations of supervisor
+                supervisor_affiliations = self.get_candidate_affiliations(candidate, in_target_years=True)
+                
                 # Check for shared affiliations
-                shared_affiliations = phd_affiliations.intersection(supervisor_affiliations)
+                shared_affiliations = phd_affiliations_at_graduation.intersection(supervisor_affiliations)
+                n_shared_inst_grad = len(shared_affiliations)
+                same_grad_inst = self.institution in shared_affiliations
 
                 # Logging per institution we are checking
                 for institution in supervisor_affiliations:
-                    is_match = institution in phd_affiliations
+                    is_match = institution in phd_affiliations_at_graduation
                     self.logger.debug(
                         f"Checking affiliation: Potential Supervisor '{candidate['display_name']}' Institution '{institution}' - "
                         f"Match Found: {'Yes' if is_match else 'No'}"
                     )
-
+                
+                # Flag if the candidate supervisor is in the pilot dataset from class attribute dict
+                is_sup_in_pilot_dataset = candidate['id'] in self.__class__.supervisors_in_pilot_dataset.values()
+                
                 if shared_affiliations:
-                    self.potential_supervisors.append(candidate)
+                    # Collect supervisor data
+                    supervisor_data = {
+                        'supervisor': candidate,
+                        'is_first': is_first,
+                        'same_grad_inst': same_grad_inst,
+                        'n_shared_inst_grad': n_shared_inst_grad,
+                        'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset
+                    }
+                    self.potential_supervisors.append(supervisor_data)
                     self.logger.info(f"Potential supervisor found: {candidate['display_name']} with shared institutions {shared_affiliations}")
-                    supervisor_found = True
-                    break  # Assuming the first match suffices
+                    contributor_found_in_openalex = True
+                    break  # The first match with the correct name is most likely the correct contributor
 
-            if not supervisor_found:
+            if not contributor_found_in_openalex:
                 self.logger.debug(f"No shared affiliations found for contributor: {contributor_name}")
 
         # Log the total number of contributors with matches
         self.logger.info(
-            f"Total contributors with matches: {len(self.potential_supervisors)} out of {len(self.contributors)}"
+            f"Total contributors with shared affiliations: {len(self.potential_supervisors)} out of {len(self.contributors)}"
         )
 
         if not self.potential_supervisors:
@@ -243,29 +293,56 @@ class AuthorRelations:
 
     def get_results(self):
         """
-        Return the OpenAlex ID pairs where matches are found.
+        Return a DataFrame with the results.
         """
         if not self.phd_candidate:
             self.logger.warning("No results to return; PhD candidate was not found.")
             return None
         phd_id = self.phd_candidate['id']
-        supervisor_ids = [supervisor['id'] for supervisor in self.potential_supervisors]
-        self.logger.info(f"Returning results: PhD ID {phd_id}, Supervisor IDs {supervisor_ids}")
-        return {'phd_id': phd_id, 'supervisor_ids': supervisor_ids}
-    
+        phd_name = self.phd_candidate['display_name']
+
+        # Create a list of dictionaries for each supervisor
+        results_list = []
+        for supervisor_data in self.potential_supervisors:
+            supervisor = supervisor_data['supervisor']
+            contributor_name = supervisor['display_name']
+            contributor_id = supervisor['id']
+            is_first = supervisor_data['is_first']
+            same_grad_inst = supervisor_data['same_grad_inst']
+            n_shared_inst_grad = supervisor_data['n_shared_inst_grad']
+            is_sup_in_pilot_dataset = supervisor_data['is_sup_in_pilot_dataset']
+
+            result_row = {
+                'phd_name': phd_name,
+                'phd_id': phd_id,
+                'contributor_name': contributor_name,
+                'contributor_id': contributor_id,
+                'phd_name': phd_name,
+                'is_first': is_first,
+                'same_grad_inst': same_grad_inst,
+                'n_shared_inst_grad': n_shared_inst_grad,
+                'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset
+            }
+            results_list.append(result_row)
+        
+        # Convert to DataFrame
+        results_df = pd.DataFrame(results_list)
+
+        return results_df
+
     
 def find_phd_and_supervisors_in_row(row):
     """
     Finds author relations information from a DataFrame row.
 
     Processes the row to find the PhD candidate and potential supervisors,
-    and returns their OpenAlex IDs.
+    and returns a DataFrame per row with the required columns.
 
     Parameters:
         row (pd.Series): A row from the DataFrame containing publication data.
 
     Returns:
-        dict: A dictionary with 'phd_name', 'phd_id', and 'supervisor_ids'.
+        pd.DataFrame: A DataFrame with columns as specified.
     """
     # Extract necessary fields
     phd_name = row['phd_name']
@@ -289,17 +366,12 @@ def find_phd_and_supervisors_in_row(row):
     author_relations.search_phd_candidate(criteria='either')
     
     # Find potential supervisors among the contributors
-    author_relations.find_potential_supervisors()
+    author_relations.collect_supervision_metadata()
     
-    # Get the OpenAlex ID pairs
-    results = author_relations.get_results()
+    # Get the DataFrame results
+    results_df = author_relations.get_results()
     
-    # Return the results along with the original row index or any additional data you need
-    return {
-        'phd_name': phd_name,
-        'phd_id': results.get('phd_id') if results else None,
-        'supervisor_ids': results.get('supervisor_ids') if results else None
-    }
+    return results_df
     
 
 def fetch_author_openalex_names_ids(author: str) -> dict[str, str]:
