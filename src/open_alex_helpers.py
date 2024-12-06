@@ -21,6 +21,7 @@ class AuthorRelations:
         self.contributors = contributors
         self.years_tolerance = years_tolerance
         self.phd_candidate = None
+        self.phd_match_by = None
         self.potential_supervisors = []
         self.verbosity = verbosity.upper()
         
@@ -103,6 +104,7 @@ class AuthorRelations:
 
             if match_type:
                 self.phd_candidate = candidate
+                self.phd_match_by = match_type
                 self.logger.info(f"PhD candidate confirmed by {match_type}: {candidate['display_name']}")
                 break
             else:
@@ -272,7 +274,8 @@ class AuthorRelations:
                         'is_first': is_first,
                         'same_grad_inst': same_grad_inst,
                         'n_shared_inst_grad': n_shared_inst_grad,
-                        'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset
+                        'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
+                        'sup_match_by': "shared institution at graduation"
                     }
                     self.potential_supervisors.append(supervisor_data)
                     self.logger.info(f"Potential supervisor found: {candidate['display_name']} with shared institutions {shared_affiliations}")
@@ -298,6 +301,7 @@ class AuthorRelations:
         if not self.phd_candidate:
             self.logger.warning("No results to return; PhD candidate was not found.")
             return None
+    
         phd_id = self.phd_candidate['id']
         phd_name = self.phd_candidate['display_name']
 
@@ -315,13 +319,15 @@ class AuthorRelations:
             result_row = {
                 'phd_name': phd_name,
                 'phd_id': phd_id,
+                'phd_match_by': self.phd_match_by,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
-                'phd_name': phd_name,
                 'is_first': is_first,
                 'same_grad_inst': same_grad_inst,
                 'n_shared_inst_grad': n_shared_inst_grad,
-                'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset
+                'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
+                'sup_match_by': supervisor_data['sup_match_by']
+
             }
             results_list.append(result_row)
         
