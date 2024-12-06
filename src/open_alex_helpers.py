@@ -296,12 +296,30 @@ class AuthorRelations:
 
     def get_results(self):
         """
-        Return a DataFrame with the results.
+        Return a DataFrame with the results of the extraction.
+
+        If no PhD candidate was found in OpenAlex, return a single-row DataFrame
+        with only 'phd_name' filled and all other columns as None.
+
+        If a PhD candidate was found but no supervisors were confirmed,
+        also return a single-row DataFrame with 'phd_name', 'phd_id', 'phd_match_by' filled
+        and all supervisor-related columns as NaN.
         """
+        
+        # The columns our DataFrame should have
+        columns = [
+            'phd_name', 'phd_id', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
+            'is_first', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset'
+        ]
+        
         if not self.phd_candidate:
-            self.logger.warning("No results to return; PhD candidate was not found.")
-            return None
-    
+            self.logger.warning("PhD candidate was not found in Open Alex so we can't look for contributors either")
+            # Return a single row with only phd_name known, rest are None
+            result_row = {col: None for col in columns}
+            result_row['phd_name'] = self.phd_name
+            return pd.DataFrame([result_row], columns=columns)
+
+         # If we reach this, we have a confirmed PhD candidate
         phd_id = self.phd_candidate['id']
         phd_name = self.phd_candidate['display_name']
 
@@ -311,6 +329,7 @@ class AuthorRelations:
             supervisor = supervisor_data['supervisor']
             contributor_name = supervisor['display_name']
             contributor_id = supervisor['id']
+            sup_match_by = supervisor_data['sup_match_by']
             is_first = supervisor_data['is_first']
             same_grad_inst = supervisor_data['same_grad_inst']
             n_shared_inst_grad = supervisor_data['n_shared_inst_grad']
@@ -322,17 +341,25 @@ class AuthorRelations:
                 'phd_match_by': self.phd_match_by,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
+                'sup_match_by': sup_match_by,
                 'is_first': is_first,
                 'same_grad_inst': same_grad_inst,
                 'n_shared_inst_grad': n_shared_inst_grad,
-                'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
-                'sup_match_by': supervisor_data['sup_match_by']
-
+                'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset
             }
             results_list.append(result_row)
         
-        # Convert to DataFrame
-        results_df = pd.DataFrame(results_list)
+        if not results_list:
+            self.logger.warning("PhD candidate confirmed, but no supervisors found.")
+            # Create a single row with phd_name, phd_id, phd_match_by, and others as None
+            result_row = {col: None for col in columns}
+            result_row['phd_name'] = phd_name
+            result_row['phd_id'] = phd_id
+            result_row['phd_match_by'] = self.phd_match_by
+            # The supervisor-related columns remain None
+            results_df = pd.DataFrame([result_row], columns=columns)
+        else:
+            results_df = pd.DataFrame(results_list, columns=columns)
 
         return results_df
 
