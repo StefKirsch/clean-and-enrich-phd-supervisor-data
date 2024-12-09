@@ -364,7 +364,7 @@ class AuthorRelations:
         return results_df
 
     
-def find_phd_and_supervisors_in_row(row, criteria):
+def find_phd_and_supervisors_in_row(row, criteria='either'):
     """
     Finds author relations information from a DataFrame row.
 
