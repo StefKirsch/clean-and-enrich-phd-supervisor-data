@@ -97,9 +97,9 @@ class AuthorRelations:
 
             if affiliation_match and title_match:
                 match_type = 'affiliation and title'
-            elif criteria == ('affiliation' or 'either') and affiliation_match:
+            elif criteria in ('affiliation', 'either') and affiliation_match:
                 match_type = 'affiliation'
-            elif criteria == ('title' or 'either') and title_match:
+            elif criteria in ('title', 'either') and title_match:
                 match_type = 'title'     
 
             if match_type:
