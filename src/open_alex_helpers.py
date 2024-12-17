@@ -16,6 +16,7 @@ class AuthorRelations:
     def __init__(self, phd_name, title, year, institution, contributors, years_tolerance=0, verbosity='INFO'):
         self.phd_name = phd_name
         self.title = title
+        self.thesis_id = None
         self.year = year
         self.institution = institution
         self.phd_publications = []
@@ -107,7 +108,16 @@ class AuthorRelations:
             if match_type:
                 self.phd_candidate = candidate
                 self.phd_match_by = match_type
-                self.phd_publications = Works().filter(author={"id": candidate['id']}).select(["id","doi"]).get()
+                
+                self.phd_publications = Works() \
+                    .filter(author={"id": candidate['id']}) \
+                    .select(["id","doi"]).get()
+                
+                self.thesis_id = Works()\
+                    .filter(author={"id": candidate['id']}) \
+                    .search_filter(title=self.title) \
+                    .select(["id"]).get()
+                
                 self.logger.info(f"PhD candidate confirmed by {match_type}: {candidate['display_name']}")
                 self.logger.info(f"{len(self.phd_publications)} publications found for that candidate.")
                 
@@ -277,12 +287,15 @@ class AuthorRelations:
                     # query works of contributor
                     contrib_publications = Works().filter(author={"id": candidate['id']}).select(["id","doi"]).get()
                     
+                    # check if the contributor coauthored the thesis
+                    is_thesis_coauthor = self.thesis_id in contrib_publications
+
                     phd_dois = [pub["doi"] for pub in self.phd_publications]
                     contrib_dois = [pub["doi"] for pub in contrib_publications]
                     
-                    # Find shared DOIs using set intersection
+                    # Find shared publications using set intersection
                     shared_dois = list(set(phd_dois) & set(contrib_dois))
-
+                    
                     # Collect supervisor data
                     supervisor_data = {
                         'supervisor': candidate,
@@ -292,7 +305,8 @@ class AuthorRelations:
                         'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
                         'sup_match_by': "shared institution at graduation",
                         'n_shared_pubs': len(shared_dois),
-                        'shared_pubs': shared_dois
+                        'shared_pubs':  shared_dois,
+                        'is_thesis_coauthor': is_thesis_coauthor
                     }
                     self.potential_supervisors.append(supervisor_data)
                     self.logger.info(f"Potential supervisor found: {candidate['display_name']} with shared institutions {shared_affiliations}")
@@ -326,7 +340,7 @@ class AuthorRelations:
         # The columns our DataFrame should have
         columns = [
             'phd_name', 'phd_id', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
-            'is_first', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset', 'n_shared_pubs', 'shared_pubs'
+            'is_first', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset', 'n_shared_pubs', 'shared_pubs', 'is_thesis_coauthor'
         ]
         
         if not self.phd_candidate:
@@ -352,6 +366,7 @@ class AuthorRelations:
             n_shared_inst_grad = supervisor_data['n_shared_inst_grad']
             is_sup_in_pilot_dataset = supervisor_data['is_sup_in_pilot_dataset']
             shared_pubs = supervisor_data['shared_pubs']
+            is_thesis_coauthor = supervisor_data['is_thesis_coauthor']
 
             result_row = {
                 'phd_name': phd_name,
@@ -365,7 +380,8 @@ class AuthorRelations:
                 'n_shared_inst_grad': n_shared_inst_grad,
                 'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
                 'n_shared_pubs': len(shared_pubs),
-                'shared_pubs': shared_pubs
+                'shared_pubs': shared_pubs,
+                'is_thesis_coauthor': is_thesis_coauthor
             }
             results_list.append(result_row)
         
