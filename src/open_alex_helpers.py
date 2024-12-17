@@ -18,6 +18,7 @@ class AuthorRelations:
         self.title = title
         self.year = year
         self.institution = institution
+        self.phd_publications = []
         self.contributors = contributors
         self.years_tolerance = years_tolerance
         self.phd_candidate = None
@@ -89,6 +90,7 @@ class AuthorRelations:
 
         # Filter candidates based on the specified criteria
         for candidate in candidates:
+            
             self.logger.debug(f"Evaluating candidate: {candidate['display_name']} (ID: {candidate['id']})")
             affiliation_match = self.check_affiliation(candidate)
             title_match = self.check_authored_work(candidate)
@@ -105,7 +107,10 @@ class AuthorRelations:
             if match_type:
                 self.phd_candidate = candidate
                 self.phd_match_by = match_type
+                self.phd_publications = Works().filter(author={"id": candidate['id']}).select(["id","doi"]).get()
                 self.logger.info(f"PhD candidate confirmed by {match_type}: {candidate['display_name']}")
+                self.logger.info(f"{len(self.phd_publications)} publications found for that candidate.")
+                
                 break
             else:
                 self.logger.debug(f"No match found for criteria: {criteria}. Moving to next candidate.")
@@ -268,6 +273,16 @@ class AuthorRelations:
                 is_sup_in_pilot_dataset = candidate['id'] in self.__class__.supervisors_in_pilot_dataset.values()
                 
                 if shared_affiliations:
+                    
+                    # query works of contributor
+                    contrib_publications = Works().filter(author={"id": candidate['id']}).select(["id","doi"]).get()
+                    
+                    phd_dois = [pub["doi"] for pub in self.phd_publications]
+                    contrib_dois = [pub["doi"] for pub in contrib_publications]
+                    
+                    # Find shared DOIs using set intersection
+                    shared_dois = list(set(phd_dois) & set(contrib_dois))
+
                     # Collect supervisor data
                     supervisor_data = {
                         'supervisor': candidate,
@@ -275,7 +290,9 @@ class AuthorRelations:
                         'same_grad_inst': same_grad_inst,
                         'n_shared_inst_grad': n_shared_inst_grad,
                         'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
-                        'sup_match_by': "shared institution at graduation"
+                        'sup_match_by': "shared institution at graduation",
+                        'n_shared_pubs': len(shared_dois),
+                        'shared_pubs': shared_dois
                     }
                     self.potential_supervisors.append(supervisor_data)
                     self.logger.info(f"Potential supervisor found: {candidate['display_name']} with shared institutions {shared_affiliations}")
@@ -309,7 +326,7 @@ class AuthorRelations:
         # The columns our DataFrame should have
         columns = [
             'phd_name', 'phd_id', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
-            'is_first', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset'
+            'is_first', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset', 'n_shared_pubs', 'shared_pubs'
         ]
         
         if not self.phd_candidate:
@@ -334,6 +351,7 @@ class AuthorRelations:
             same_grad_inst = supervisor_data['same_grad_inst']
             n_shared_inst_grad = supervisor_data['n_shared_inst_grad']
             is_sup_in_pilot_dataset = supervisor_data['is_sup_in_pilot_dataset']
+            shared_pubs = supervisor_data['shared_pubs']
 
             result_row = {
                 'phd_name': phd_name,
@@ -345,7 +363,9 @@ class AuthorRelations:
                 'is_first': is_first,
                 'same_grad_inst': same_grad_inst,
                 'n_shared_inst_grad': n_shared_inst_grad,
-                'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset
+                'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
+                'n_shared_pubs': len(shared_pubs),
+                'shared_pubs': shared_pubs
             }
             results_list.append(result_row)
         
