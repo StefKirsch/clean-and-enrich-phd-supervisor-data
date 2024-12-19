@@ -77,3 +77,9 @@ def fetch_supervisors_from_pilot_dataset(repo_url, file_extension=".xlsx", verbo
         print(f"Found {len(unique_supervisors)} unique supervisors.")
 
     return unique_supervisors
+
+
+def remove_commas(text: str) -> str:
+    # Replace commas with an empty string
+    cleaned_text = text.replace(',', '')
+    return cleaned_text
