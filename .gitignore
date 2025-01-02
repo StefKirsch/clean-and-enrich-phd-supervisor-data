@@ -10,3 +10,6 @@ remove_entries_with_comma.py
 contact_email.txt
 lookup_log.txt
 *.log
+
+# VS Code files
+settings.json
