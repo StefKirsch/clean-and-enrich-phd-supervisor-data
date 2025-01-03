@@ -1,6 +1,7 @@
 *.csv
 *.pyc
 .ipynb_checkpoints
+*.pdf
 
 scoupus_api_key.csv
 
