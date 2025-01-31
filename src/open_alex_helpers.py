@@ -111,14 +111,15 @@ class AuthorRelations:
                 self.phd_candidate = candidate
                 self.phd_match_by = match_type
                 
-                self.phd_publications = WorksWithRetry() \
-                    .filter(author={"id": candidate['id']}) \
-                    .select(["id","doi"]).get()
+                self.phd_publications = pd.DataFrame(WorksWithRetry()
+                    .filter(author={"id": candidate['id']})
+                    .select(["id","title","doi","type"]).get()
+                )
                 
-                self.thesis_id = WorksWithRetry()\
-                    .filter(author={"id": candidate['id']}) \
-                    .search_filter(title=self.title) \
-                    .select(["id"]).get()
+                # get the thesis id
+                self.thesis_id = self.phd_publications\
+                    .query("title == @self.title")\
+                    .first_valid_index() # make sure to get no errors if there is no match
                 
                 self.logger.info(f"PhD candidate confirmed by {match_type}: {candidate['display_name']}")
                 self.logger.info(f"{len(self.phd_publications)} publications found for that candidate.")
@@ -292,7 +293,7 @@ class AuthorRelations:
                     # check if the contributor coauthored the thesis
                     is_thesis_coauthor = self.thesis_id in contrib_publications
 
-                    phd_dois = [pub["doi"] for pub in self.phd_publications]
+                    phd_dois = self.phd_publications["doi"].tolist()
                     contrib_dois = [pub["doi"] for pub in contrib_publications]
                     
                     # Find shared publications using set intersection
