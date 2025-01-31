@@ -221,7 +221,7 @@ class AuthorRelations:
         Every confirmed contributor is added to the final dataset, the only difference for them will be the metadata that we collect here
         
         The following metadata will be collected per confirmed contributor:
-        'is_first': contributor is mentioned as first contributor in underlying dataset -> bool
+        'contributor_rank': Rank of contributor based on the order they are mentioned in the dataset -> int
         'grad_inst': Phd and contributor shared institution in the time window of the thesis publication -> bool
         'n_shared_inst_grad': Number of institutions PhD candidate and contributor share at the time of graduation -> int
         'is_sup_in_pilot_dataset': Contributor is mentioned in the pilot dataset -> bool
@@ -250,7 +250,7 @@ class AuthorRelations:
             self.logger.debug(f"Searching for contributor: {contributor_name}")
 
             # set flag for candidate being the first contributor in the underlying dataset
-            is_first = (idx == 0)
+            contributor_rank = idx + 1
             
             # Search for contributors in OpenAlex
             openalex_candidates = AuthorsWithRetry().search(contributor_name).get()
@@ -301,7 +301,7 @@ class AuthorRelations:
                     # Collect supervisor data
                     supervisor_data = {
                         'supervisor': candidate,
-                        'is_first': is_first,
+                        'contributor_rank': contributor_rank,
                         'same_grad_inst': same_grad_inst,
                         'n_shared_inst_grad': n_shared_inst_grad,
                         'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
@@ -342,7 +342,7 @@ class AuthorRelations:
         # The columns our DataFrame should have
         columns = [
             'phd_name', 'phd_id', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
-            'is_first', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset', 'n_shared_pubs', 'shared_pubs', 'is_thesis_coauthor'
+            'contributor_rank', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset', 'n_shared_pubs', 'shared_pubs', 'is_thesis_coauthor'
         ]
         
         if not self.phd_candidate:
@@ -363,7 +363,7 @@ class AuthorRelations:
             contributor_name = supervisor['display_name']
             contributor_id = supervisor['id']
             sup_match_by = supervisor_data['sup_match_by']
-            is_first = supervisor_data['is_first']
+            contributor_rank = supervisor_data['contributor_rank']
             same_grad_inst = supervisor_data['same_grad_inst']
             n_shared_inst_grad = supervisor_data['n_shared_inst_grad']
             is_sup_in_pilot_dataset = supervisor_data['is_sup_in_pilot_dataset']
@@ -377,7 +377,7 @@ class AuthorRelations:
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
                 'sup_match_by': sup_match_by,
-                'is_first': is_first,
+                'contributor_rank': contributor_rank,
                 'same_grad_inst': same_grad_inst,
                 'n_shared_inst_grad': n_shared_inst_grad,
                 'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
