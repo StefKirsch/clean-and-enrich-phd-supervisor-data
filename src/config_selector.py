@@ -3,8 +3,9 @@ from IPython.display import display
 
 # Define dataset presets
 CONFIGS = {
-    "quick_test": {"NROWS": 25, "use_dataset": "biomedical_5y"},
+    "quick_test": {"NROWS": 25, "use_dataset": None},
     "biomedical_subset": {"NROWS": 2573, "use_dataset": "biomedical_5y"},
+    "random_subset": {"NROWS": 2573, "use_dataset": None},
     "full_dataset": {"NROWS": None, "use_dataset": None},
 }
 
@@ -40,9 +41,6 @@ class DatasetSelector:
         
         with self.output:
             self.output.clear_output()
-            print(f"Running analysis with preset: {selected}")
-            print(f"NROWS: {self.NROWS}, use_dataset: {self.use_dataset}")
-            print(f"Output file: {self.output_filename}")
 
     def display(self):
         display(self.config_dropdown, self.output)
