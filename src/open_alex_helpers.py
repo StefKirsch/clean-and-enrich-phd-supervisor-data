@@ -17,8 +17,9 @@ class AuthorRelations:
     
     def __init__(self, phd_name, title, year, institution, contributors, years_tolerance=0, verbosity='INFO'):
         self.phd_name = phd_name
-        self.title = title
-        self.thesis_id = None
+        self.title = title # title of the thesis as it appears in Narcis
+        self.title_open_alex = None # title of the thesis as it appears in OpenAlex
+        self.thesis_id = None # OpenAlex ID of the thesis
         self.year = year
         self.institution = institution
         self.phd_publications = []
@@ -96,15 +97,15 @@ class AuthorRelations:
             
             self.logger.debug(f"Evaluating candidate: {candidate['display_name']} (ID: {candidate['id']})")
             affiliation_match = self.check_affiliation(candidate)
-            title_match = self.check_authored_work(candidate)
+            title_open_alex = self.check_authored_work(candidate)
 
             match_type = None
 
-            if affiliation_match and title_match:
+            if affiliation_match and title_open_alex:
                 match_type = 'affiliation and title'
             elif criteria in ('affiliation', 'either') and affiliation_match:
                 match_type = 'affiliation'
-            elif criteria in ('title', 'either') and title_match:
+            elif criteria in ('title', 'either') and title_open_alex:
                 match_type = 'title'     
 
             if match_type:
@@ -117,9 +118,13 @@ class AuthorRelations:
                 )
                 
                 # get the thesis id
-                self.thesis_id = self.phd_publications\
-                    .query("title == @self.title")\
-                    .first_valid_index() # make sure to get no errors if there is no match
+                self.thesis_id = (
+                    self.phd_publications
+                    .query("title == @title_open_alex")  # Ensure title matches in phd_publications
+                    .first_valid_index()  # Make sure to get no errors if there is no match
+                )
+
+                self.title_open_alex = title_open_alex
                 
                 self.logger.info(f"PhD candidate confirmed by {match_type}: {candidate['display_name']}")
                 self.logger.info(f"{len(self.phd_publications)} publications found for that candidate.")
@@ -188,29 +193,26 @@ class AuthorRelations:
         """
         Check if the candidate has authored the specified title.
         """
-        candidate_id = candidate['id']
-        if self.verbosity == 'DEBUG':
-            self.logger.debug(f"Target Title: '{self.title}'")
+    
+        # Get the title of the PhD candidate's dissertation.
+        # This returns a list, so that if they have several dissertations, we get all of them 
+        title_open_alex = (
+            WorksWithRetry()
+            .search(self.title) # Title search is quite liberal, so we also want to verify it's a dissertation
+            .filter(author={"id": candidate['id']}, type="dissertation")
+            .select("title")
+            .get()  # get returns a dict with the selected properties as key-value pairs.
+        )
+                    
+        # Convert the list of dicts to a list of values, extracting the title(s)
+        title_open_alex = [value for title in title_open_alex for value in title.values()]
 
-        works = WorksWithRetry().filter(author={"id": candidate_id}).get()
-        match_found = False
-
-        for work in works:
-            work_title = work['title']
-            if not work_title:
-                continue
-            is_match = self.title.lower() == work_title.lower()
-            self.logger.debug(
-                f"Checking work: Candidate Work Title '{work_title}' - Match Found: {'Yes' if is_match else 'No'}"
+        self.logger.debug(
+                f"Checking if dissertation '{self.title}' is authored by author '{candidate['id']}' - Match Found: {title_open_alex if title_open_alex else 'No'}"
             )
-            if is_match:
-                match_found = True
-                break  # Stop checking after a match is found
 
-        if not match_found:
-            self.logger.debug("No title match found for this candidate.")
-
-        return match_found
+        return title_open_alex
+            
 
     def collect_supervision_metadata(self):
         """
@@ -342,22 +344,25 @@ class AuthorRelations:
         
         # The columns our DataFrame should have
         columns = [
-            'phd_name', 'phd_id', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
+            'phd_name', 'phd_id', 'title', 'title_open_alex', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
             'contributor_rank', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset', 'n_shared_pubs', 'shared_pubs', 'is_thesis_coauthor'
         ]
         
         if not self.phd_candidate:
             self.logger.warning("PhD candidate was not found in Open Alex so we can't look for contributors either")
-            # Return a single row with only phd_name known, rest are None
+            # Create a single row with the data we have and the others as None
             result_row = {col: None for col in columns}
             result_row['phd_name'] = self.phd_name
+            result_row['title'] = self.title
             return pd.DataFrame([result_row], columns=columns)
 
-         # If we reach this, we have a confirmed PhD candidate
+        # If we reach this, we have a confirmed the PhD candidate
         phd_id = self.phd_candidate['id']
         phd_name = self.phd_candidate['display_name']
+        title_open_alex = self.title_open_alex if self.title_open_alex else None # convert empty list to None
 
         # Create a list of dictionaries for each supervisor
+        # Each supervisor is represented by one row in the final dataset
         results_list = []
         for supervisor_data in self.potential_supervisors:
             supervisor = supervisor_data['supervisor']
@@ -374,6 +379,8 @@ class AuthorRelations:
             result_row = {
                 'phd_name': phd_name,
                 'phd_id': phd_id,
+                'title': self.title,
+                'title_open_alex': title_open_alex,
                 'phd_match_by': self.phd_match_by,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
@@ -390,10 +397,12 @@ class AuthorRelations:
         
         if not results_list:
             self.logger.warning("PhD candidate confirmed, but no supervisors found.")
-            # Create a single row with phd_name, phd_id, phd_match_by, and others as None
+            # Create a single row with the data we have and the others as None
             result_row = {col: None for col in columns}
             result_row['phd_name'] = phd_name
             result_row['phd_id'] = phd_id
+            result_row['title'] = self.title
+            result_row['title_open_alex'] = self.title_open_alex if self.title_open_alex else None # convert empty list to None
             result_row['phd_match_by'] = self.phd_match_by
             # The supervisor-related columns remain None
             results_df = pd.DataFrame([result_row], columns=columns)
