@@ -120,8 +120,8 @@ class AuthorRelations:
                 # get the thesis id
                 self.thesis_id = (
                     self.phd_publications
-                    .query("title == @title_open_alex")  # Ensure title matches in phd_publications
-                    .first_valid_index()  # Make sure to get no errors if there is no match
+                        .query("title == @title_open_alex")  # Ensure title matches in phd_publications
+                        .first_valid_index()  # Make sure to get no errors if there is no match
                 )
 
                 self.title_open_alex = title_open_alex
@@ -198,10 +198,10 @@ class AuthorRelations:
         # This returns a list, so that if they have several dissertations, we get all of them 
         title_open_alex = (
             WorksWithRetry()
-            .search(self.title) # Title search is quite liberal, so we also want to verify it's a dissertation
-            .filter(author={"id": candidate['id']}, type="dissertation")
-            .select("title")
-            .get()  # get returns a dict with the selected properties as key-value pairs.
+                .search(self.title) # Title search is quite liberal, so we also want to verify it's a dissertation
+                .filter(author={"id": candidate['id']}, type="dissertation")
+                .select("title")
+                .get()  # get returns a dict with the selected properties as key-value pairs.
         )
                     
         # Convert the list of dicts to a list of values, extracting the title(s)
