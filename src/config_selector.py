@@ -3,7 +3,7 @@ from IPython.display import display
 
 # Define dataset presets
 CONFIGS = {
-    "quick_test": {"NROWS": 25, "use_dataset": None},
+    "quick_test": {"NROWS": 10, "use_dataset": None},
     "biomedical_subset": {"NROWS": 2573, "use_dataset": "biomedical_5y"},
     "random_subset": {"NROWS": 2573, "use_dataset": None},
     "full_dataset": {"NROWS": None, "use_dataset": None},
