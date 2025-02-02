@@ -344,7 +344,7 @@ class AuthorRelations:
         
         # The columns our DataFrame should have
         columns = [
-            'phd_name', 'phd_id', 'title', 'title_open_alex', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
+            'phd_name', 'phd_id', 'year', 'title', 'title_open_alex', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
             'contributor_rank', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset', 'n_shared_pubs', 'shared_pubs', 'is_thesis_coauthor'
         ]
         
@@ -353,6 +353,7 @@ class AuthorRelations:
             # Create a single row with the data we have and the others as None
             result_row = {col: None for col in columns}
             result_row['phd_name'] = self.phd_name
+            result_row['year'] = self.year
             result_row['title'] = self.title
             return pd.DataFrame([result_row], columns=columns)
 
@@ -379,6 +380,7 @@ class AuthorRelations:
             result_row = {
                 'phd_name': phd_name,
                 'phd_id': phd_id,
+                'year': self.year,
                 'title': self.title,
                 'title_open_alex': title_open_alex,
                 'phd_match_by': self.phd_match_by,
@@ -401,6 +403,7 @@ class AuthorRelations:
             result_row = {col: None for col in columns}
             result_row['phd_name'] = phd_name
             result_row['phd_id'] = phd_id
+            result_row['year'] = self.year
             result_row['title'] = self.title
             result_row['title_open_alex'] = self.title_open_alex if self.title_open_alex else None # convert empty list to None
             result_row['phd_match_by'] = self.phd_match_by
