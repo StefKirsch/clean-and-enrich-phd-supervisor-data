@@ -79,7 +79,11 @@ def fetch_supervisors_from_pilot_dataset(repo_url, file_extension=".xlsx", verbo
     return unique_supervisors
 
 
-def remove_commas(text: str) -> str:
-    # Replace commas with an empty string
-    cleaned_text = text.replace(',', '')
+def remove_illegal_title_characters(text: str) -> str:
+    # Remove commas and pipe characters
+    # Commas are removed with the intention to make the matching by literal title more robust. When using
+    # OpenAlex's search() parameter for this, we don't need it anymore, but it also does not hurt. 
+    # Pipe characters are misinterpreted as OR by pyalex, which can cause unexpected behavior and 
+    # is also not supported by the search() parameter.
+    cleaned_text = text.replace(',', '').replace('|', '')
     return cleaned_text
