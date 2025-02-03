@@ -4,6 +4,10 @@ import pandas as pd
 from os import path, makedirs
 import time
 from requests.exceptions import ConnectionError, ReadTimeout
+import spacy
+
+# Medium Model performed basically the same as the large model.
+nlp = spacy.load("en_core_web_md") 
 
 from src.io_helpers import fetch_supervisors_from_pilot_dataset
 from src.clean_names_helpers import format_name_to_lastname_firstname
@@ -19,6 +23,7 @@ class AuthorRelations:
         self.phd_name = phd_name
         self.title = title # title of the thesis as it appears in Narcis
         self.title_open_alex = None # title of the thesis as it appears in OpenAlex
+        self.max_title_similarity = None # highest similarity between Narcis title and fuzzily matched OpenAlex titles
         self.thesis_id = None # OpenAlex ID of the thesis
         self.year = year
         self.institution = institution
@@ -97,7 +102,16 @@ class AuthorRelations:
             
             self.logger.debug(f"Evaluating candidate: {candidate['display_name']} (ID: {candidate['id']})")
             affiliation_match = self.check_affiliation(candidate)
-            title_open_alex = self.check_authored_work(candidate)
+            title_open_alex, max_title_similarity = self.check_authored_work(candidate)
+
+            # TODO Potential Optimization
+            # instead of just getting the dissertation and similarity here, we can also get all the
+            # works of the candidate right away here as a works object and convert it to a dataframe
+            # we can then perform all checks on that dataframe. If we manage to confirm the candidate as the PhD,
+            # we break out of the loop, but the df sticks around. So we can then do all further checks and
+            # operations on the dataframe we got from the confirmed candidate
+            # We can then completely get rid of the `check_authored_work` method.
+            # Maybe we can add a method for the checking logic though.
 
             match_type = None
 
@@ -112,6 +126,7 @@ class AuthorRelations:
                 self.phd_candidate = candidate
                 self.phd_match_by = match_type
                 
+                # TODO with the above optimization, we can move this up
                 self.phd_publications = pd.DataFrame(WorksWithRetry()
                     .filter(author={"id": candidate['id']})
                     .select(["id","title","doi","type"]).get()
@@ -125,6 +140,7 @@ class AuthorRelations:
                 )
 
                 self.title_open_alex = title_open_alex
+                self.max_title_similarity = max_title_similarity
                 
                 self.logger.info(f"PhD candidate confirmed by {match_type}: {candidate['display_name']}")
                 self.logger.info(f"{len(self.phd_publications)} publications found for that candidate.")
@@ -199,19 +215,37 @@ class AuthorRelations:
         title_open_alex = (
             WorksWithRetry()
                 .search(self.title) # Title search is quite liberal, so we also want to verify it's a dissertation
-                .filter(author={"id": candidate['id']}, type="dissertation")
+                .filter(author={"id": candidate['id']})
+                #.filter(type="dissertation") # require work to be listed as a dissertation
                 .select("title")
                 .get()  # get returns a dict with the selected properties as key-value pairs.
         )
-                    
+        
         # Convert the list of dicts to a list of values, extracting the title(s)
         title_open_alex = [value for title in title_open_alex for value in title.values()]
+        
+        # Get semantic similarity between Narcis title and OpenAlex title with spaCy 
+        # dpc1.similarity(doc2) is sensitive to erroring out, so we make sure that we start out with valid strings
+
+        title_str = self.title if isinstance(self.title, str) else ""
+        titles_str_open_alex = [title for title in title_open_alex if isinstance(title, str)]
+
+        if title_str and titles_str_open_alex:
+            doc1 = nlp(title_str)
+
+            max_title_similarity = max(
+                (doc1.similarity(nlp(title)) for title in titles_str_open_alex),
+                default=0  # Handle the case when valid_titles is empty
+            )
+        else:
+            max_title_similarity = 0  # No valid data to compare
 
         self.logger.debug(
-                f"Checking if dissertation '{self.title}' is authored by author '{candidate['id']}' - Match Found: {title_open_alex if title_open_alex else 'No'}"
-            )
+            f"Checking if dissertation '{self.title}' is authored by author '{candidate['id']}' - Match Found: "
+            f"{title_open_alex} with max. similarity {max_title_similarity}" if title_open_alex else "No"
+        )
 
-        return title_open_alex
+        return title_open_alex, max_title_similarity
             
 
     def collect_supervision_metadata(self):
@@ -344,7 +378,7 @@ class AuthorRelations:
         
         # The columns our DataFrame should have
         columns = [
-            'phd_name', 'phd_id', 'year', 'title', 'title_open_alex', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
+            'phd_name', 'phd_id', 'year', 'title', 'title_open_alex', 'max_title_similarity', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
             'contributor_rank', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset', 'n_shared_pubs', 'shared_pubs', 'is_thesis_coauthor'
         ]
         
@@ -361,7 +395,8 @@ class AuthorRelations:
         phd_id = self.phd_candidate['id']
         phd_name = self.phd_candidate['display_name']
         title_open_alex = self.title_open_alex if self.title_open_alex else None # convert empty list to None
-
+        max_title_similarity = self.max_title_similarity if self.max_title_similarity else None
+        
         # Create a list of dictionaries for each supervisor
         # Each supervisor is represented by one row in the final dataset
         results_list = []
@@ -383,6 +418,7 @@ class AuthorRelations:
                 'year': self.year,
                 'title': self.title,
                 'title_open_alex': title_open_alex,
+                'max_title_similarity': max_title_similarity,
                 'phd_match_by': self.phd_match_by,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
@@ -406,6 +442,7 @@ class AuthorRelations:
             result_row['year'] = self.year
             result_row['title'] = self.title
             result_row['title_open_alex'] = self.title_open_alex if self.title_open_alex else None # convert empty list to None
+            result_row['max_title_similarity'] = self.max_title_similarity if self.max_title_similarity else None
             result_row['phd_match_by'] = self.phd_match_by
             # The supervisor-related columns remain None
             results_df = pd.DataFrame([result_row], columns=columns)
