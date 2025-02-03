@@ -470,15 +470,19 @@ class AuthorsWithRetry(Authors):
         else:
             return f"{config.openalex_url}/authors"
 
-    def get(self, max_retries=5, backoff_seconds=300, **kwargs):
+    def get(self, max_retries=12, base_delay=2, **kwargs):
+        """
+        `get()` with quadratic backoff.
+        """
         for attempt in range(1, max_retries + 1):
             try:
                 return super().get(**kwargs)
             except (ConnectionError, ReadTimeout) as err:
                 if attempt < max_retries:
+                    wait_time = base_delay * (attempt ** 2)
                     print(f"[AuthorsWithRetry] Attempt {attempt} failed: {err}")
-                    print(f"Waiting {backoff_seconds} seconds before retry...")
-                    time.sleep(backoff_seconds)
+                    print(f"Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
                 else:
                     print("[AuthorsWithRetry] Max retries reached. Raising error.")
                     raise
@@ -496,16 +500,20 @@ class WorksWithRetry(Works):
     def _full_collection_name(self):
         # Force the endpoint to /works
         return f"{config.openalex_url}/works"
-    
-    def get(self, max_retries=5, backoff_seconds=300, **kwargs):
+
+    def get(self, max_retries=12, base_delay=2, **kwargs):
+        """
+        `get()` with quadratic backoff.
+        """
         for attempt in range(1, max_retries + 1):
             try:
                 return super().get(**kwargs)
             except (ConnectionError, ReadTimeout) as err:
                 if attempt < max_retries:
+                    wait_time = base_delay * (attempt ** 2)
                     print(f"[WorksWithRetry] Attempt {attempt} failed: {err}")
-                    print(f"Waiting {backoff_seconds} seconds before retry...")
-                    time.sleep(backoff_seconds)
+                    print(f"Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
                 else:
                     print("[WorksWithRetry] Max retries reached. Raising error.")
                     raise
