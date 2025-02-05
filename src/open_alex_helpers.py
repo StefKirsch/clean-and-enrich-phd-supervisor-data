@@ -5,11 +5,12 @@ from os import path, makedirs
 import time
 from requests.exceptions import ConnectionError, ReadTimeout
 import spacy
+import numpy as np
 
 # Medium Model performed basically the same as the large model.
 nlp = spacy.load("en_core_web_md") 
 
-from src.io_helpers import fetch_supervisors_from_pilot_dataset
+from src.io_helpers import fetch_supervisors_from_pilot_dataset, remove_illegal_title_characters
 from src.clean_names_helpers import format_name_to_lastname_firstname
 
 class AuthorRelations:
@@ -33,7 +34,10 @@ class AuthorRelations:
         self.phd_candidate = None
         self.phd_match_by = None
         self.potential_supervisors = []
+        
+        
         self.verbosity = verbosity.upper()
+        self.similarity_cutoff = 0.8
         
         # Define target years as a property of the object
         self.target_years = self.calculate_target_years()
@@ -102,7 +106,7 @@ class AuthorRelations:
             
             self.logger.debug(f"Evaluating candidate: {candidate['display_name']} (ID: {candidate['id']})")
             affiliation_match = self.check_affiliation(candidate)
-            title_open_alex, max_title_similarity = self.check_authored_work(candidate)
+            titles_open_alex, max_title_similarity = self.check_authored_work(candidate)
 
             # TODO Potential Optimization
             # instead of just getting the dissertation and similarity here, we can also get all the
@@ -115,11 +119,19 @@ class AuthorRelations:
 
             match_type = None
 
-            if affiliation_match and title_open_alex:
+            # Require similarity above a threshold
+            if max_title_similarity <= 0.8:
+                self.logger.debug(f"Similarity between Narcis title and OpenAlex title is {max_title_similarity*100}% which is below the cutoff of {self.similarity_cutoff*100}%. Skipping candidate.")
+                title_match = False
+            else:
+                self.logger.debug(f"Similarity between Narcis title and OpenAlex title is {max_title_similarity*100}% above the cutoff of {self.similarity_cutoff*100}%. Title confirmed.")
+                title_match = True
+                
+            if affiliation_match and title_match:
                 match_type = 'affiliation and title'
             elif criteria in ('affiliation', 'either') and affiliation_match:
                 match_type = 'affiliation'
-            elif criteria in ('title', 'either') and title_open_alex:
+            elif criteria in ('title', 'either') and titles_open_alex:
                 match_type = 'title'     
 
             if match_type:
@@ -139,7 +151,7 @@ class AuthorRelations:
                         .first_valid_index()  # Make sure to get no errors if there is no match
                 )
 
-                self.title_open_alex = title_open_alex
+                self.title_open_alex = titles_open_alex
                 self.max_title_similarity = max_title_similarity
                 
                 self.logger.info(f"PhD candidate confirmed by {match_type}: {candidate['display_name']}")
@@ -209,43 +221,66 @@ class AuthorRelations:
         """
         Check if the candidate has authored the specified title.
         """
-    
+
+        # Pre-process the title so that it works with the search parameter and with nlp() and .similarity()
+        title_search_str = (
+            # Remove illegal characters from the title and lowercase to make search() robust 
+            # (most importantly remove pipe characters "|", which search() interprets as OR)
+            # Lowercase the title mostly to allow a more reasonable similarity calculation later.
+            # Similarity is very sensitive to capitalization, but since that is not very consistent between
+            # OpenAlex and Narcis, we get rid of it now.
+            remove_illegal_title_characters(self.title).lower()
+            if isinstance(self.title, str) 
+            # if we don't get a string back, replace with an empty string so .similarity() doesn't error out
+            else ""
+            )
+        
         # Get the title of the PhD candidate's dissertation.
-        # This returns a list, so that if they have several dissertations, we get all of them 
-        title_open_alex = (
+        # This returns a list, so if there are several matching works, we get all of them 
+        titles_open_alex = (
             WorksWithRetry()
-                .search(self.title) # Title search is quite liberal, so we also want to verify it's a dissertation
+                .search(title_search_str)
                 .filter(author={"id": candidate['id']})
-                #.filter(type="dissertation") # require work to be listed as a dissertation
+                # Require work to be listed as a dissertation
+                # This is commented out right now, the main reason being that many dissertations aren't
+                # listed as such in OpenAlex 
+                #.filter(type="dissertation") 
                 .select("title")
                 .get()  # get returns a dict with the selected properties as key-value pairs.
         )
         
         # Convert the list of dicts to a list of values, extracting the title(s)
-        title_open_alex = [value for title in title_open_alex for value in title.values()]
+        titles_open_alex = [value for title in titles_open_alex for value in title.values()]
         
         # Get semantic similarity between Narcis title and OpenAlex title with spaCy 
-        # dpc1.similarity(doc2) is sensitive to erroring out, so we make sure that we start out with valid strings
+        # doc1.similarity(doc2) is sensitive to erroring out, so we make sure that we start out with valid strings
+        titles_str_open_alex = [
+            # We do the same processing with the OpenAlex title as we do with the Narcis title
+            remove_illegal_title_characters(title).lower()
+            for title in titles_open_alex
+            if isinstance(title, str)
+            ]
 
-        title_str = self.title if isinstance(self.title, str) else ""
-        titles_str_open_alex = [title for title in title_open_alex if isinstance(title, str)]
+        # We use the lowercase versions of the strings and also remove punctuation. 
+        if title_search_str and titles_str_open_alex:
+            doc1 = nlp(title_search_str)
 
-        if title_str and titles_str_open_alex:
-            doc1 = nlp(title_str)
-
-            max_title_similarity = max(
-                (doc1.similarity(nlp(title)) for title in titles_str_open_alex),
-                default=0  # Handle the case when valid_titles is empty
-            )
+            # calculate similarities
+            similarities = np.array([doc1.similarity(nlp(title)) for title in titles_str_open_alex])
+            
+            # get id and value of max similarity
+            id_max = np.argmax(similarities) if similarities.size > 0 else 0
+            max_title_similarity = np.max(similarities) if similarities.size > 0 else 0
         else:
+            id_max = 0
             max_title_similarity = 0  # No valid data to compare
 
         self.logger.debug(
             f"Checking if dissertation '{self.title}' is authored by author '{candidate['id']}' - Match Found: "
-            f"{title_open_alex} with max. similarity {max_title_similarity}" if title_open_alex else "No"
+            f"{titles_open_alex[id_max]} with max. similarity {max_title_similarity}" if titles_open_alex else "No"
         )
 
-        return title_open_alex, max_title_similarity
+        return titles_open_alex, max_title_similarity
             
 
     def collect_supervision_metadata(self):
