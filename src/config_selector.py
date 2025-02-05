@@ -3,14 +3,15 @@ from IPython.display import display
 
 # Define dataset presets
 CONFIGS = {
-    "quick_test": {"NROWS": 10, "use_dataset": None},
-    "biomedical_subset": {"NROWS": 2573, "use_dataset": "biomedical_5y"},
-    "random_subset": {"NROWS": 2573, "use_dataset": None},
-    "full_dataset": {"NROWS": None, "use_dataset": None},
+    "quick test": {"NROWS": 10, "use_dataset": None},
+    "100 rows": {"NROWS": 100, "use_dataset": None},
+    "biomedical subset": {"NROWS": 2573, "use_dataset": "biomedical_5y"},
+    "random subset": {"NROWS": 2573, "use_dataset": None},
+    "full dataset": {"NROWS": None, "use_dataset": None},
 }
 
 class DatasetSelector:
-    def __init__(self, default="quick_test"):
+    def __init__(self, default="quick test"):
         self.config_dropdown = widgets.Dropdown(
             options=CONFIGS.keys(),
             value=default,
@@ -46,5 +47,5 @@ class DatasetSelector:
         display(self.config_dropdown, self.output)
 
 # Function to create and return an instance of the selector
-def get_dataset_selector(default="quick_test"):
+def get_dataset_selector(default="quick test"):
     return DatasetSelector(default)
