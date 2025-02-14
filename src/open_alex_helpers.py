@@ -25,6 +25,9 @@ class AuthorRelations:
         self.title = title # title of the thesis as it appears in Narcis
         self.title_open_alex = None # title of the thesis as it appears in OpenAlex
         self.max_title_similarity = None # highest similarity between Narcis title and fuzzily matched OpenAlex titles
+        self.n_close_matches = None # number of fuzzily matched OpenAlex titles
+        self.exact_match = None # True if we have an exact match between Narcis title and OpenAlex title
+        self.affiliation_match = None # True if we have a match between Narcis institution and OpenAlex institution
         self.thesis_id = None # OpenAlex ID of the thesis
         self.year = year
         self.institution = institution
@@ -86,12 +89,19 @@ class AuthorRelations:
         # Add the handler to the logger
         self.logger.addHandler(file_handler)
 
-    def search_phd_candidate(self, criteria):
+    def search_phd_candidate(self):
         """
-        Search for the PhD candidate by name and validate based on criteria.
-        Criteria options: 'affiliation', 'title', 'both'
+        Search for the PhD candidate by name and validate by name match, fuzzy match of works and institution.
+        Collect all candidates into a list, then decide which best matches criteria.
+
+        Now we also assign a 'match_score' to each candidate:
+            match_score = n_close_matches + (50 if exact_match) + (20 if affiliation_match)
+        Then we pick the candidate with the highest match_score.
+
+        If in debug mode, print a table representation of the sorted DataFrame.
         """
         self.logger.info(f"Searching for PhD candidate: {self.phd_name}")
+
         # Search for candidates by PhD name
         candidates = AuthorsWithRetry().search(self.phd_name).get()
         self.logger.debug(f"Found: {len(candidates)} people who are potential matches.")
@@ -101,13 +111,16 @@ class AuthorRelations:
             self.logger.warning("No candidates found with the given PhD name.")
             return None
 
-        # Filter candidates based on the specified criteria
+        # Collect raw and processed info for all candidates
+        candidates_info = []
         for candidate in candidates:
-            
             self.logger.debug(f"Evaluating candidate: {candidate['display_name']} (ID: {candidate['id']})")
             affiliation_match = self.check_affiliation(candidate)
-            titles_open_alex, max_title_similarity = self.check_authored_work(candidate)
 
+            # This returns lists for the OpenAlex IDs, the titles, and the similarities
+            # sorted in descending order by similarity.
+            ids_open_alex, titles_open_alex, title_similarities = self.check_authored_work(candidate)
+            
             # TODO Potential Optimization
             # instead of just getting the dissertation and similarity here, we can also get all the
             # works of the candidate right away here as a works object and convert it to a dataframe
@@ -116,56 +129,96 @@ class AuthorRelations:
             # operations on the dataframe we got from the confirmed candidate
             # We can then completely get rid of the `check_authored_work` method.
             # Maybe we can add a method for the checking logic though.
+        
+            max_similarity = title_similarities[0] if len(title_similarities) > 0 else 0.0
 
-            match_type = None
+            # Quantify degree of match and number of close matches
+            exact_match = (max_similarity >= 1)
+            close_matches = [val for val in title_similarities if val >= self.similarity_cutoff]
+            n_close_matches = len(close_matches)
 
-            # Require similarity above a threshold
-            if max_title_similarity <= 0.8:
-                self.logger.debug(f"Similarity between Narcis title and OpenAlex title is {max_title_similarity*100}% which is below the cutoff of {self.similarity_cutoff*100}%. Skipping candidate.")
-                title_match = False
-            else:
-                self.logger.debug(f"Similarity between Narcis title and OpenAlex title is {max_title_similarity*100}% above the cutoff of {self.similarity_cutoff*100}%. Title confirmed.")
-                title_match = True
-                
-            if affiliation_match and title_match:
-                match_type = 'affiliation and title'
-            elif criteria in ('affiliation', 'either') and affiliation_match:
-                match_type = 'affiliation'
-            elif criteria in ('title', 'either') and titles_open_alex:
-                match_type = 'title'     
+            candidates_info.append({
+                'candidate': candidate,
+                'candidate_name': candidate['display_name'],
+                'candidate_id': candidate['id'],
+                'ids_open_alex': ids_open_alex,
+                'titles_open_alex': titles_open_alex,
+                'title_similarities': title_similarities,
+                'max_similarity': max_similarity,
+                'exact_match': exact_match,
+                'close_matches': close_matches,
+                'n_close_matches': n_close_matches,
+                'affiliation_match': affiliation_match
+            })
 
-            if match_type:
-                self.phd_candidate = candidate
-                self.phd_match_by = match_type
-                
-                # TODO with the above optimization, we can move this up
-                self.phd_publications = pd.DataFrame(WorksWithRetry()
-                    .filter(author={"id": candidate['id']})
-                    .select(["id","title","doi","type"]).get()
-                )
-                
-                # get the thesis id
-                self.thesis_id = (
-                    self.phd_publications
-                        .query("title == @title_open_alex")  # Ensure title matches in phd_publications
-                        .first_valid_index()  # Make sure to get no errors if there is no match
-                )
+        # Convert to a DataFrame for ranking
+        df = pd.DataFrame(candidates_info)
 
-                self.title_open_alex = titles_open_alex
-                self.max_title_similarity = max_title_similarity
-                
-                self.logger.info(f"PhD candidate confirmed by {match_type}: {candidate['display_name']}")
-                self.logger.info(f"{len(self.phd_publications)} publications found for that candidate.")
-                
-                break
-            else:
-                self.logger.debug(f"No match found for criteria: {criteria}. Moving to next candidate.")
+        # Assign 'match_score' using the given criteria
+        # 1. Number of close matches
+        # 2. +50 if we have an exact match
+        # 3. +20 if we have an affiliation match
+        df = df.assign(
+            match_score=(
+                df['n_close_matches']
+                + df['exact_match'].astype(int) * 50
+                + df['affiliation_match'].astype(int) * 20
+            )
+        )
 
-        if not self.phd_candidate:
-            self.logger.warning("PhD candidate not found or criteria not met.")
+        # Sort by match_score descending
+        df = df.sort_values('match_score', ascending=False, ignore_index=True)
+
+        # If logger is in debug mode, print the ranked table
+        if self.logger.isEnabledFor(logging.DEBUG):
+            # Select the columns most relevant for debugging the ranking
+            columns_to_show = [
+                'candidate_name', 'candidate_id', 'match_score',
+                'max_similarity', 'n_close_matches', 'exact_match', 'affiliation_match'
+            ]
+            self.logger.debug(f"Ranked candidates:\n{df[columns_to_show].to_string(index=False)}")
+
+        # Optional check: If all scores are zero or df is empty, we might want to stop here
+        if df.empty or df.loc[0, 'match_score'] == 0:
+            self.logger.warning("No candidates meet the given ranking criteria.")
             return None
-        else:
-            return self.phd_candidate
+
+        # Select the best candidate (highest match_score)
+        best_candidate_info = df.iloc[0].to_dict()
+
+        # Assign values to the object for the best match for the candidate
+        self.phd_candidate = best_candidate_info['candidate']
+        # For reference, indicate how we arrived at this candidate
+        self.phd_match_by = "ranking"
+        self.title_open_alex = best_candidate_info['titles_open_alex']
+        self.max_title_similarity = best_candidate_info['max_similarity']
+        self.n_close_matches = best_candidate_info['n_close_matches']
+        self.exact_match = best_candidate_info['exact_match']
+        self.affiliation_match = best_candidate_info['affiliation_match']
+
+        # Retrieve the publications for the best candidate
+        # TODO with the above optimization, we can move this up
+        self.phd_publications = pd.DataFrame(
+            WorksWithRetry()
+            .filter(author={"id": self.phd_candidate['id']})
+            .select(["id", "title", "doi", "type"]).get()
+        )
+
+        # Get the thesis id (if present)
+        self.thesis_id = (
+            self.phd_publications
+            .query("title == @self.title_open_alex")
+            .first_valid_index()
+        )
+
+        self.logger.info(
+            f"PhD candidate confirmed by {self.phd_match_by}: {self.phd_candidate['display_name']}"
+        )
+        self.logger.info(
+            f"{len(self.phd_publications)} publications found for that candidate."
+        )
+
+        return self.phd_candidate
 
     def check_affiliation(self, candidate):
         """
@@ -237,20 +290,21 @@ class AuthorRelations:
         
         # Get the title of the PhD candidate's dissertation.
         # This returns a list, so if there are several matching works, we get all of them 
-        titles_open_alex = (
+        works_by_candidate = (
             WorksWithRetry()
-                .search(title_search_str)
+                #.search(title_search_str)
                 .filter(author={"id": candidate['id']})
                 # Require work to be listed as a dissertation
                 # This is commented out right now, the main reason being that many dissertations aren't
                 # listed as such in OpenAlex 
                 #.filter(type="dissertation") 
-                .select("title")
+                .select(["id", "title"])
                 .get()  # get returns a dict with the selected properties as key-value pairs.
         )
         
         # Convert the list of dicts to a list of values, extracting the title(s)
-        titles_open_alex = [value for title in titles_open_alex for value in title.values()]
+        ids_open_alex = [work['id'] for work in works_by_candidate]
+        titles_open_alex = [work['title'] for work in works_by_candidate]
         
         # Get semantic similarity between Narcis title and OpenAlex title with spaCy 
         # doc1.similarity(doc2) is sensitive to erroring out, so we make sure that we start out with valid strings
@@ -260,27 +314,42 @@ class AuthorRelations:
             for title in titles_open_alex
             if isinstance(title, str)
             ]
+        
+        # Return empty lists if no works were found or only works with no title
+        # Note: This effectively rejects Works with no title, which seems reasonable 
+        if not titles_str_open_alex:
+            return [], [], []
 
         # We use the lowercase versions of the strings and also remove punctuation. 
         if title_search_str and titles_str_open_alex:
+            
+            # Convert string to spaCy document
             doc1 = nlp(title_search_str)
 
-            # calculate similarities
-            similarities = np.array([doc1.similarity(nlp(title)) for title in titles_str_open_alex])
-            
-            # get id and value of max similarity
-            id_max = np.argmax(similarities) if similarities.size > 0 else 0
-            max_title_similarity = np.max(similarities) if similarities.size > 0 else 0
+            # Calculate similarities
+            title_similarities = np.array([
+                doc1.similarity(nlp(title)) if title else 0.0
+                for title in titles_str_open_alex
+            ])
         else:
-            id_max = 0
-            max_title_similarity = 0  # No valid data to compare
+            title_similarities = []  # No valid data to compare
 
+        # Sort titles by similarity
+        combined = list(zip(ids_open_alex, titles_open_alex, title_similarities))
+        
+        # Sort by the score (3rd element)
+        combined.sort(key=lambda x: x[2], reverse=True)
+        
+        # Unzip back
+        sorted_ids, sorted_titles, sorted_similarities = zip(*combined)
+        
         self.logger.debug(
-            f"Checking if dissertation '{self.title}' is authored by author '{candidate['id']}' - Match Found: "
-            f"{titles_open_alex[id_max]} with max. similarity {max_title_similarity}" if titles_open_alex else "No"
+            f"Finding publications by '{candidate['id']}' - Found {len(sorted_titles)} works"
+            f"with the following similarity scores to their dissertation {self.title}: {sorted_similarities}. {sorted_titles[0]} is the closest match."
         )
-
-        return titles_open_alex, max_title_similarity
+        
+        # Return various metrics about the candidate works, sorted by similarity
+        return sorted_ids, sorted_titles, sorted_similarities
             
 
     def collect_supervision_metadata(self):
@@ -413,9 +482,28 @@ class AuthorRelations:
         
         # The columns our DataFrame should have
         columns = [
-            'phd_name', 'phd_id', 'year', 'title', 'title_open_alex', 'max_title_similarity', 'phd_match_by', 'contributor_name', 'contributor_id', 'sup_match_by',
-            'contributor_rank', 'same_grad_inst', 'n_shared_inst_grad', 'is_sup_in_pilot_dataset', 'n_shared_pubs', 'shared_pubs', 'is_thesis_coauthor'
+            'phd_name', 
+            'phd_id', 
+            'year', 
+            'title', 
+            'title_open_alex', 
+            'max_title_similarity',
+            'n_close_matches',
+            'exact_match',
+            'affiliation_match',
+            'phd_match_by', 
+            'contributor_name', 
+            'contributor_id', 
+            'sup_match_by',
+            'contributor_rank', 
+            'same_grad_inst', 
+            'n_shared_inst_grad', 
+            'is_sup_in_pilot_dataset', 
+            'n_shared_pubs', 
+            'shared_pubs', 
+            'is_thesis_coauthor'
         ]
+
         
         if not self.phd_candidate:
             self.logger.warning("PhD candidate was not found in Open Alex so we can't look for contributors either")
@@ -454,6 +542,9 @@ class AuthorRelations:
                 'title': self.title,
                 'title_open_alex': title_open_alex,
                 'max_title_similarity': max_title_similarity,
+                'n_close_matches': self.n_close_matches,
+                'exact_match': self.exact_match,
+                'affiliation_match': self.affiliation_match,
                 'phd_match_by': self.phd_match_by,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
@@ -478,6 +569,9 @@ class AuthorRelations:
             result_row['title'] = self.title
             result_row['title_open_alex'] = self.title_open_alex if self.title_open_alex else None # convert empty list to None
             result_row['max_title_similarity'] = self.max_title_similarity if self.max_title_similarity else None
+            result_row['n_close_matches'] = self.n_close_matches
+            result_row['exact_match'] = self.exact_match
+            result_row['affiliation_match'] = self.affiliation_match
             result_row['phd_match_by'] = self.phd_match_by
             # The supervisor-related columns remain None
             results_df = pd.DataFrame([result_row], columns=columns)
@@ -585,8 +679,8 @@ def find_phd_and_supervisors_in_row(row, criteria='either'):
         verbosity='DEBUG'  # Set to 'NONE' for production
     )
     
-    # Search for the PhD candidate using the desired criteria
-    author_relations.search_phd_candidate(criteria=criteria)
+    # Search for the PhD candidate
+    author_relations.search_phd_candidate()
     
     # Find potential supervisors among the contributors
     author_relations.collect_supervision_metadata()
