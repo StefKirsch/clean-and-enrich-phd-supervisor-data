@@ -38,8 +38,9 @@ class AuthorRelations:
         self.phd_match_by = None
         self.potential_supervisors = []
         
-        
         self.verbosity = verbosity.upper()
+        
+        # Cutoff for considering a title match to be close enough to count as a 'close match'
         self.similarity_cutoff = 0.8
         
         # Define target years as a property of the object
