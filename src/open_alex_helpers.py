@@ -190,7 +190,6 @@ class AuthorRelations:
 
         # get the number of name search matches for the candidate name in NARCIS
         self.n_name_search_matches = len(candidates)
-        print(candidates)
         # Assign values to the object for the best match for the candidate
         self.phd_candidate = best_candidate_info['candidate']
         # For reference, indicate how we arrived at this candidate
