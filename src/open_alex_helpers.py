@@ -22,6 +22,7 @@ class AuthorRelations:
     
     def __init__(self, phd_name, title, year, institution, contributors, years_tolerance=0, verbosity='INFO'):
         self.phd_name = phd_name
+        self.n_name_search_matches = None # Number of matches for the PhD candidate's name between NARCIS and OpenAlex
         self.title = title # title of the thesis as it appears in Narcis
         self.title_open_alex = None # title of the thesis as it appears in OpenAlex
         self.max_title_similarity = None # highest similarity between Narcis title and fuzzily matched OpenAlex titles
@@ -189,6 +190,7 @@ class AuthorRelations:
 
         # get the number of name search matches for the candidate name in NARCIS
         self.n_name_search_matches = len(candidates)
+        print(candidates)
         # Assign values to the object for the best match for the candidate
         self.phd_candidate = best_candidate_info['candidate']
         # For reference, indicate how we arrived at this candidate
