@@ -446,6 +446,7 @@ class AuthorRelations:
                     # Collect supervisor data
                     supervisor_data = {
                         'supervisor': candidate,
+                        'n_name_search_matches_contrib': len(openalex_candidates),
                         'contributor_rank': contributor_rank,
                         'same_grad_inst': same_grad_inst,
                         'n_shared_inst_grad': n_shared_inst_grad,
@@ -499,6 +500,7 @@ class AuthorRelations:
             'phd_match_by', 
             'contributor_name', 
             'contributor_id', 
+            'n_name_search_matches_contrib',
             'sup_match_by',
             'contributor_rank', 
             'same_grad_inst', 
@@ -533,6 +535,7 @@ class AuthorRelations:
             supervisor = supervisor_data['supervisor']
             contributor_name = supervisor['display_name']
             contributor_id = supervisor['id']
+            n_name_search_matches_contrib = supervisor_data['n_name_search_matches_contrib']
             sup_match_by = supervisor_data['sup_match_by']
             contributor_rank = supervisor_data['contributor_rank']
             same_grad_inst = supervisor_data['same_grad_inst']
@@ -555,6 +558,7 @@ class AuthorRelations:
                 'phd_match_by': self.phd_match_by,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
+                'n_name_search_matches_contrib': n_name_search_matches_contrib,
                 'sup_match_by': sup_match_by,
                 'contributor_rank': contributor_rank,
                 'same_grad_inst': same_grad_inst,
