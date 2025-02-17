@@ -187,6 +187,8 @@ class AuthorRelations:
         # Select the best candidate (highest match_score)
         best_candidate_info = df.iloc[0].to_dict()
 
+        # get the number of name search matches for the candidate name in NARCIS
+        self.n_name_search_matches = len(candidates)
         # Assign values to the object for the best match for the candidate
         self.phd_candidate = best_candidate_info['candidate']
         # For reference, indicate how we arrived at this candidate
@@ -485,6 +487,7 @@ class AuthorRelations:
         columns = [
             'phd_name', 
             'phd_id', 
+            'n_name_search_matches',
             'year', 
             'title', 
             'title_open_alex', 
@@ -511,6 +514,7 @@ class AuthorRelations:
             # Create a single row with the data we have and the others as None
             result_row = {col: None for col in columns}
             result_row['phd_name'] = self.phd_name
+            result_row['n_name_search_matches'] = 0
             result_row['year'] = self.year
             result_row['title'] = self.title
             return pd.DataFrame([result_row], columns=columns)
@@ -539,6 +543,7 @@ class AuthorRelations:
             result_row = {
                 'phd_name': phd_name,
                 'phd_id': phd_id,
+                'n_name_search_matches': self.n_name_search_matches,
                 'year': self.year,
                 'title': self.title,
                 'title_open_alex': title_open_alex,
@@ -566,6 +571,7 @@ class AuthorRelations:
             result_row = {col: None for col in columns}
             result_row['phd_name'] = phd_name
             result_row['phd_id'] = phd_id
+            result_row['n_name_search_matches'] = self.n_name_search_matches
             result_row['year'] = self.year
             result_row['title'] = self.title
             result_row['title_open_alex'] = self.title_open_alex if self.title_open_alex else None # convert empty list to None
