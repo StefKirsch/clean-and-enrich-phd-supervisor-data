@@ -417,19 +417,11 @@ class AuthorRelations:
                 shared_affiliations = phd_affiliations_at_graduation.intersection(supervisor_affiliations)
                 n_shared_inst_grad = len(shared_affiliations)
                 same_grad_inst = self.institution in shared_affiliations
-
-                # Logging per institution we are checking
-                for institution in supervisor_affiliations:
-                    is_match = institution in phd_affiliations_at_graduation
-                    self.logger.debug(
-                        f"Checking affiliation: Potential Supervisor '{candidate['display_name']}' Institution '{institution}' - "
-                        f"Match Found: {'Yes' if is_match else 'No'}"
-                    )
-                
-                # Flag if the candidate supervisor is in the pilot dataset from class attribute dict
-                is_sup_in_pilot_dataset = candidate['id'] in self.__class__.supervisors_in_pilot_dataset.values()
                 
                 if shared_affiliations:
+                    
+                    # Flag if the candidate supervisor is in the pilot dataset from class attribute dict
+                    is_sup_in_pilot_dataset = candidate['id'] in self.__class__.supervisors_in_pilot_dataset.values()
                     
                     # query works of contributor
                     contrib_publications = WorksWithRetry().filter(author={"id": candidate['id']}).select(["id","doi"]).get()
