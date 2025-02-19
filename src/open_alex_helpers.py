@@ -156,7 +156,7 @@ class AuthorRelations:
         # Convert to a DataFrame for ranking
         df = pd.DataFrame(candidates_info)
 
-        # Assign 'match_score' using the given criteria
+        # Assign 'match_score' using given criteria
         # 1. Number of close matches
         # 2. +50 if we have an exact match
         # 3. +20 if we have an affiliation match
@@ -664,7 +664,7 @@ class WorksWithRetry(Works):
                     raise
 
 
-def find_phd_and_supervisors_in_row(row, criteria='either'):
+def find_phd_and_supervisors_in_row(row):
     """
     Finds author relations information from a DataFrame row.
 
