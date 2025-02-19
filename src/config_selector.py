@@ -4,7 +4,7 @@ from IPython.display import display
 # Define dataset presets
 CONFIGS = {
     "quick test": {"NROWS": 10, "use_dataset": None},
-    "100 rows": {"NROWS": 100, "use_dataset": None},
+    "200 rows": {"NROWS": 200, "use_dataset": None},
     "biomedical subset": {"NROWS": 2573, "use_dataset": "biomedical_5y"},
     "random subset": {"NROWS": 2573, "use_dataset": None},
     "full dataset": {"NROWS": None, "use_dataset": None},
