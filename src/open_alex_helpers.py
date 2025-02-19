@@ -29,6 +29,7 @@ class AuthorRelations:
         self.n_close_matches = None # number of fuzzily matched OpenAlex titles
         self.exact_match = None # True if we have an exact match between Narcis title and OpenAlex title
         self.affiliation_match = None # True if we have a match between Narcis institution and OpenAlex institution
+        self.phd_match_score = None # match score for the PhD candidate
         self.thesis_id = None # OpenAlex ID of the thesis
         self.year = year
         self.institution = institution
@@ -199,6 +200,7 @@ class AuthorRelations:
         self.n_close_matches = best_candidate_info['n_close_matches']
         self.exact_match = best_candidate_info['exact_match']
         self.affiliation_match = best_candidate_info['affiliation_match']
+        self.phd_match_score = best_candidate_info['match_score']
 
         # Retrieve the publications for the best candidate
         # TODO with the above optimization, we can move this up
@@ -501,7 +503,8 @@ class AuthorRelations:
             'n_close_matches',
             'exact_match',
             'affiliation_match',
-            'phd_match_by', 
+            'phd_match_score',
+            'phd_match_by',
             'contributor_name', 
             'contributor_id', 
             'name_search_matches_contrib_with_matching_inst',
@@ -559,6 +562,7 @@ class AuthorRelations:
                 'n_close_matches': self.n_close_matches,
                 'exact_match': self.exact_match,
                 'affiliation_match': self.affiliation_match,
+                'phd_match_score': self.phd_match_score,
                 'phd_match_by': self.phd_match_by,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
@@ -588,6 +592,7 @@ class AuthorRelations:
             result_row['n_close_matches'] = self.n_close_matches
             result_row['exact_match'] = self.exact_match
             result_row['affiliation_match'] = self.affiliation_match
+            result_row['phd_match_score'] = self.phd_match_score
             result_row['phd_match_by'] = self.phd_match_by
             # The supervisor-related columns remain None
             results_df = pd.DataFrame([result_row], columns=columns)
