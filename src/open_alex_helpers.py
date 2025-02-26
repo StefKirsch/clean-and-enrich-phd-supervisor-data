@@ -705,7 +705,7 @@ def find_phd_and_supervisors_in_row(row, model):
         institution=institution,
         contributors=contributors,
         model=model,
-        years_tolerance=-1,  # Adjust as needed
+        years_tolerance=-4, # cf. issue #19
         verbosity='DEBUG'  # Set to 'NONE' for production
     )
     
