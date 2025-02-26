@@ -4,11 +4,7 @@ import pandas as pd
 from os import path, makedirs
 import time
 from requests.exceptions import ConnectionError, ReadTimeout
-import spacy
-import numpy as np
-
-# Medium Model performed basically the same as the large model.
-nlp = spacy.load("en_core_web_md") 
+from sentence_transformers import util
 
 from src.io_helpers import fetch_supervisors_from_pilot_dataset, remove_illegal_title_characters
 from src.clean_names_helpers import format_name_to_lastname_firstname
@@ -20,7 +16,7 @@ class AuthorRelations:
     # Values: supervisor OpenAlex ID
     supervisors_in_pilot_dataset = dict()
     
-    def __init__(self, phd_name, title, year, institution, contributors, years_tolerance=0, verbosity='INFO'):
+    def __init__(self, phd_name, title, year, institution, contributors, model, years_tolerance=0, verbosity='INFO'):
         self.phd_name = phd_name
         self.n_name_search_matches = None # Number of matches for the PhD candidate's name between NARCIS and OpenAlex
         self.title = title # title of the thesis as it appears in Narcis
@@ -39,6 +35,9 @@ class AuthorRelations:
         self.phd_candidate = None
         self.phd_match_by = None
         self.potential_supervisors = []
+        
+        # NLP model
+        self.model = model
         
         self.verbosity = verbosity.upper()
         
@@ -136,7 +135,11 @@ class AuthorRelations:
             max_similarity = title_similarities[0] if len(title_similarities) > 0 else 0.0
 
             # Quantify degree of match and number of close matches
-            exact_match = (max_similarity >= 1)
+            
+            # We do dot require 1.0, because some models like specter are very strict for giving a perfect score.
+            # A manual evaluation for specter showed that values of 0.99 and more were always exact matches, with only 
+            # non-semantic differences.
+            exact_match = (max_similarity >= 0.99)
             close_matches = [val for val in title_similarities if val >= self.similarity_cutoff]
             n_close_matches = len(close_matches)
 
@@ -312,7 +315,8 @@ class AuthorRelations:
         ids_open_alex = [work['id'] for work in works_by_candidate]
         titles_open_alex = [work['title'] for work in works_by_candidate]
         
-        # Get semantic similarity between Narcis title and OpenAlex title with spaCy 
+        # Get semantic similarity between Narcis title and OpenAlex title with NLP model
+         
         # doc1.similarity(doc2) is sensitive to erroring out, so we make sure that we start out with valid strings
         titles_str_open_alex = [
             # We do the same processing with the OpenAlex title as we do with the Narcis title
@@ -326,26 +330,30 @@ class AuthorRelations:
         if not titles_str_open_alex:
             return [], [], []
 
-        # We use the lowercase versions of the strings and also remove punctuation. 
         if title_search_str and titles_str_open_alex:
-            
-            # Convert string to spaCy document
-            doc1 = nlp(title_search_str)
+            # Encode string document
+            emb1 = self.model.encode(title_search_str, convert_to_tensor=True, show_progress_bar=False)
 
-            # Calculate similarities
-            title_similarities = np.array([
-                doc1.similarity(nlp(title)) if title else 0.0
-                for title in titles_str_open_alex
-            ])
+            title_similarities = []
+            
+            for title in titles_str_open_alex:
+                emb2 = self.model.encode(title, convert_to_tensor=True, show_progress_bar=False)
+                
+                # if we have a proper encoding for both documents, we calculate similarity
+                if emb1 is not None and emb2 is not None:
+                    similarity = util.cos_sim(emb1, emb2)
+                # otherwise we output 0
+                else:
+                    similarity = 0.0
+                    
+                title_similarities.append(similarity.item())
         else:
             title_similarities = []  # No valid data to compare
 
         # Sort titles by similarity
         combined = list(zip(ids_open_alex, titles_open_alex, title_similarities))
-        
         # Sort by the score (3rd element)
         combined.sort(key=lambda x: x[2], reverse=True)
-        
         # Unzip back
         sorted_ids, sorted_titles, sorted_similarities = zip(*combined)
         
@@ -669,7 +677,7 @@ class WorksWithRetry(Works):
                     raise
 
 
-def find_phd_and_supervisors_in_row(row):
+def find_phd_and_supervisors_in_row(row, model):
     """
     Finds author relations information from a DataFrame row.
 
@@ -696,6 +704,7 @@ def find_phd_and_supervisors_in_row(row):
         year=year,
         institution=institution,
         contributors=contributors,
+        model=model,
         years_tolerance=-1,  # Adjust as needed
         verbosity='DEBUG'  # Set to 'NONE' for production
     )
