@@ -24,6 +24,7 @@ class AuthorRelations:
         self.max_title_similarity = None # highest similarity between Narcis title and fuzzily matched OpenAlex titles
         self.n_close_matches = None # number of fuzzily matched OpenAlex titles
         self.exact_match = None # True if we have an exact match between Narcis title and OpenAlex title
+        self.near_exact_match = None # # True if we have an very good match between Narcis title and OpenAlex title
         self.affiliation_match = None # True if we have a match between Narcis institution and OpenAlex institution
         self.phd_match_score = None # match score for the PhD candidate
         self.thesis_id = None # OpenAlex ID of the thesis
@@ -97,7 +98,7 @@ class AuthorRelations:
         Collect all candidates into a list, then decide which best matches criteria.
 
         Now we also assign a 'match_score' to each candidate:
-            match_score = n_close_matches + (50 if exact_match) + (20 if affiliation_match)
+            match_score = n_close_matches + (50 if exact_match) + (20 if near_exact_match) + (20 if affiliation_match)
         Then we pick the candidate with the highest match_score.
 
         If in debug mode, print a table representation of the sorted DataFrame.
@@ -140,6 +141,7 @@ class AuthorRelations:
             # A manual evaluation for specter showed that values of 0.99 and more were always exact matches, with only 
             # non-semantic differences.
             exact_match = (max_similarity >= 0.99)
+            near_exact_match = (max_similarity >= 0.9)
             close_matches = [val for val in title_similarities if val >= self.similarity_cutoff]
             n_close_matches = len(close_matches)
 
@@ -152,6 +154,7 @@ class AuthorRelations:
                 'title_similarities': title_similarities,
                 'max_similarity': max_similarity,
                 'exact_match': exact_match,
+                'near_exact_match': near_exact_match,
                 'close_matches': close_matches,
                 'n_close_matches': n_close_matches,
                 'affiliation_match': affiliation_match
@@ -168,6 +171,7 @@ class AuthorRelations:
             match_score=(
                 df['n_close_matches']
                 + df['exact_match'].astype(int) * 50
+                + df['near_exact_match'].astype(int) * 20
                 + df['affiliation_match'].astype(int) * 20
             )
         )
@@ -180,7 +184,7 @@ class AuthorRelations:
             # Select the columns most relevant for debugging the ranking
             columns_to_show = [
                 'candidate_name', 'candidate_id', 'match_score',
-                'max_similarity', 'n_close_matches', 'exact_match', 'affiliation_match'
+                'max_similarity', 'n_close_matches', 'exact_match', 'near_exact_match', 'affiliation_match'
             ]
             self.logger.debug(f"Ranked candidates:\n{df[columns_to_show].to_string(index=False)}")
 
@@ -202,6 +206,7 @@ class AuthorRelations:
         self.max_title_similarity = best_candidate_info['max_similarity']
         self.n_close_matches = best_candidate_info['n_close_matches']
         self.exact_match = best_candidate_info['exact_match']
+        self.near_exact_match = best_candidate_info['near_exact_match']
         self.affiliation_match = best_candidate_info['affiliation_match']
         self.phd_match_score = best_candidate_info['match_score']
 
@@ -510,6 +515,7 @@ class AuthorRelations:
             'max_title_similarity',
             'n_close_matches',
             'exact_match',
+            'near_exact_match',
             'affiliation_match',
             'phd_match_score',
             'phd_match_by',
@@ -569,6 +575,7 @@ class AuthorRelations:
                 'max_title_similarity': max_title_similarity,
                 'n_close_matches': self.n_close_matches,
                 'exact_match': self.exact_match,
+                'near_exact_match': self.near_exact_match,
                 'affiliation_match': self.affiliation_match,
                 'phd_match_score': self.phd_match_score,
                 'phd_match_by': self.phd_match_by,
@@ -599,6 +606,7 @@ class AuthorRelations:
             result_row['max_title_similarity'] = self.max_title_similarity if self.max_title_similarity else None
             result_row['n_close_matches'] = self.n_close_matches
             result_row['exact_match'] = self.exact_match
+            result_row['near_exact_match'] = self.near_exact_match
             result_row['affiliation_match'] = self.affiliation_match
             result_row['phd_match_score'] = self.phd_match_score
             result_row['phd_match_by'] = self.phd_match_by
