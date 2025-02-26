@@ -43,7 +43,7 @@ class AuthorRelations:
         self.verbosity = verbosity.upper()
         
         # Cutoff for considering a title match to be close enough to count as a 'close match'
-        self.similarity_cutoff = 0.8
+        self.similarity_cutoff = 0.7
         
         # Define target years as a property of the object
         self.target_years = self.calculate_target_years()
