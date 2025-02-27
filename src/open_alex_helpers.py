@@ -166,7 +166,8 @@ class AuthorRelations:
         # Assign 'match_score' using given criteria
         # 1. Number of close matches
         # 2. +50 if we have an exact match
-        # 3. +20 if we have an affiliation match
+        # 3. +20 if we have a near exact match
+        # 4. +20 if we have an affiliation match
         df = df.assign(
             match_score=(
                 df['n_close_matches']
@@ -306,6 +307,9 @@ class AuthorRelations:
         # This returns a list, so if there are several matching works, we get all of them 
         works_by_candidate = (
             WorksWithRetry()
+                # Search for the title
+                # We don't do this right now so that we are not dependent on the search matching of
+                # Open Alex
                 #.search(title_search_str)
                 .filter(author={"id": candidate['id']})
                 # Require work to be listed as a dissertation
