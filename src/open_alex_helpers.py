@@ -39,20 +39,27 @@ class AuthorRelations:
         
         # NLP model
         self.model = model
-        
-        self.verbosity = verbosity.upper()
-        
         # Cutoff for considering a title match to be close enough to count as a 'close match'
         self.similarity_cutoff = 0.7
         
-        # Define target years as a property of the object
-        self.target_years = self.calculate_target_years()
+        # Define how long before and after the graduation date works can be written to be considered 
+        # for the fuzzy title matching to match PhDs
+        # The first entry is the years we consider before the graduation date, 
+        # the second one is the years after
+        # Note: With float("inf") as the first value, we consider all publications that were written 
+        # before the graduation
+        self.years_offset_phd_matching = [float("inf"), 3]
+        
+         # Define target years as a property of the object
+        self.affiliation_target_years = self.calculate_affiliation_target_years()
+        
+        self.verbosity = verbosity.upper()
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
         self.setup_logging()
 
-    def calculate_target_years(self):
+    def calculate_affiliation_target_years(self):
         """
         Calculates the target years based on the years_tolerance.
         If years_tolerance is negative, includes years before self.year.
@@ -218,7 +225,7 @@ class AuthorRelations:
             .filter(author={"id": self.phd_candidate['id']})
             .select(["id", "title", "doi", "type"]).get()
         )
-
+        
         # Get the thesis id (if present)
         self.thesis_id = (
             self.phd_publications
@@ -244,12 +251,12 @@ class AuthorRelations:
         match_found = False
 
         if self.verbosity == 'DEBUG':
-            self.logger.debug(f"Target Institution: '{self.institution}', Target Years: {self.target_years}")
+            self.logger.debug(f"Target Institution: '{self.institution}', Target Years: {self.affiliation_target_years}")
 
         for affiliation in affiliations:
             institution_name = affiliation['institution']['display_name']
             years = affiliation.get('years', [])
-            is_match = (self.institution == institution_name) and any(year in self.target_years for year in years)
+            is_match = (self.institution == institution_name) and any(year in self.affiliation_target_years for year in years)
             self.logger.debug(
                 f"Checking affiliation: Candidate Institution '{institution_name}', Years: {years} - "
                 f"Match Found: {'Yes' if is_match else 'No'}"
@@ -281,7 +288,7 @@ class AuthorRelations:
             institution_name = affiliation['institution']['display_name']
             affiliation_years = affiliation.get('years', [])
             
-            if not in_target_years or self.target_years.intersection(affiliation_years):
+            if not in_target_years or self.affiliation_target_years.intersection(affiliation_years):
                 institutions.add(institution_name)
         return institutions
     
@@ -303,9 +310,14 @@ class AuthorRelations:
             else ""
             )
         
+        # Minimum and maximum years we want to consider publications from
+        min_year = self.year - self.years_offset_phd_matching[0]
+        max_year = self.year + self.years_offset_phd_matching[1]
+                
         # Get the title of the PhD candidate's dissertation.
-        # This returns a list, so if there are several matching works, we get all of them 
-        works_by_candidate = (
+        # WorksWithRetry returns a list, so if there are several matching works, we get all of them 
+        # We then convert it into a dataframe to handle in more easily
+        works_by_candidate = pd.DataFrame(
             WorksWithRetry()
                 # Search for the title
                 # We don't do this right now so that we are not dependent on the search matching of
@@ -315,14 +327,21 @@ class AuthorRelations:
                 # Require work to be listed as a dissertation
                 # This is commented out right now, the main reason being that many dissertations aren't
                 # listed as such in OpenAlex 
-                #.filter(type="dissertation") 
-                .select(["id", "title"])
+                #.filter(type="dissertation")
+                .select(["id", "title", "publication_year"])
                 .get()  # get returns a dict with the selected properties as key-value pairs.
         )
         
+        # Return empty lists if no works were found
+        if len(works_by_candidate) == 0:
+            return [], [], []
+        
+        # Filter out publications outside of the range that we want to consider
+        works_by_candidate = works_by_candidate.query("@min_year <= publication_year <= @max_year")
+        
         # Convert the list of dicts to a list of values, extracting the title(s)
-        ids_open_alex = [work['id'] for work in works_by_candidate]
-        titles_open_alex = [work['title'] for work in works_by_candidate]
+        ids_open_alex = works_by_candidate['id'].tolist()
+        titles_open_alex = works_by_candidate['title'].tolist()
         
         # Get semantic similarity between Narcis title and OpenAlex title with NLP model
          
@@ -334,7 +353,7 @@ class AuthorRelations:
             if isinstance(title, str)
             ]
         
-        # Return empty lists if no works were found or only works with no title
+        # Return empty lists if no works were found or only works with no title after character removal
         # Note: This effectively rejects Works with no title, which seems reasonable 
         if not titles_str_open_alex:
             return [], [], []
@@ -404,7 +423,7 @@ class AuthorRelations:
             return []
         
         # Log the target institutions (affiliations of the PhD candidate in the target years)
-        self.logger.debug(f"Target Institutions: {phd_affiliations_at_graduation}, Target Years: {self.target_years}")
+        self.logger.debug(f"Target Institutions: {phd_affiliations_at_graduation}, Target Years: {self.affiliation_target_years}")
         self.logger.info("Searching for potential supervisors among contributors.")
         
         # Initialize list to store supervisor data
