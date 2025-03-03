@@ -3,6 +3,7 @@ import pandas as pd
 from io import BytesIO
 import re
 from string import punctuation
+from num2words import num2words
 
 def fetch_supervisors_from_pilot_dataset(repo_url, file_extension=".xlsx", verbosity=False):
     """
@@ -89,3 +90,7 @@ def remove_illegal_title_characters(text: str) -> str:
     punctuation_pattern = '[' + re.escape(punctuation) + ']'
     cleaned_text = re.sub(punctuation_pattern, '', text)
     return cleaned_text
+
+
+def ordinal(n):
+    return num2words(n, to='ordinal_num')
