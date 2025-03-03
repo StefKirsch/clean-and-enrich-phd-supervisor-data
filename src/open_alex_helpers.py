@@ -50,8 +50,11 @@ class AuthorRelations:
         # before the graduation
         self.years_offset_phd_matching = [float("inf"), 3]
         
-         # Define target years as a property of the object
+        # Define target years as a property of the object
         self.affiliation_target_years = self.calculate_affiliation_target_years()
+        
+        # Minimum number of shared publications required for a contributor match 
+        self.n_shared_pubs_min = 1
         
         self.verbosity = verbosity.upper()
         
@@ -442,7 +445,7 @@ class AuthorRelations:
             
             # If no candidates are found continue to next contributor
             if not openalex_candidates:
-                self.logger.debug(f"No candidates found for contributor: {contributor_name}.  Moving to next contributor.")
+                self.logger.debug(f"No candidates found for contributor: {contributor_name}. Moving to next contributor.")
                 continue
             
             # Prepare contributor_found_in_openalex flag
@@ -511,6 +514,10 @@ class AuthorRelations:
                     if self.thesis_id in [pub["id"] for pub in contrib_publications]:
                         is_thesis_coauthor = True
 
+                if len(shared_publications_union) < self.n_shared_pubs_min:
+                    self.logger.debug("No shared publications found between PhD candidate and potential contributors. Moving to next contributor.")
+                    continue
+                
                 n_shared_inst_grad = len(all_shared_affiliations)
                 shared_dois = list(shared_publications_union)
 
@@ -521,7 +528,7 @@ class AuthorRelations:
                     'same_grad_inst': same_grad_inst,  # True if at least one candidate has the same graduation institution
                     'n_shared_inst_grad': n_shared_inst_grad,  # total count of shared institutions across candidates
                     'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,  # True if at least one candidate is in the pilot dataset
-                    'sup_match_by': "name match and shared institution at graduation",
+                    'sup_match_by': f"Name match, shared institution at graduation and >={self.n_shared_pubs_min} shared publications.",
                     'n_shared_pubs': len(shared_dois),  # total number of shared DOIs
                     'shared_pubs': shared_dois,  # list of shared publication DOIs
                     'is_thesis_coauthor': is_thesis_coauthor  # True if at least one candidate coauthored the thesis
