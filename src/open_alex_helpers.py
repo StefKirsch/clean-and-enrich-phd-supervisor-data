@@ -21,6 +21,7 @@ class AuthorRelations:
         self.n_name_search_matches = None # Number of matches for the PhD candidate's name between NARCIS and OpenAlex
         self.title = title # title of the thesis as it appears in Narcis
         self.title_open_alex = None # title of the thesis as it appears in OpenAlex
+        self.title_similarities = None # similarities between Narcis title and fuzzily matched OpenAlex titles
         self.max_title_similarity = None # highest similarity between Narcis title and fuzzily matched OpenAlex titles
         self.n_close_matches = None # number of fuzzily matched OpenAlex titles
         self.exact_match = None # True if we have an exact match between Narcis title and OpenAlex title
@@ -199,11 +200,6 @@ class AuthorRelations:
             ]
             self.logger.debug(f"Ranked candidates:\n{df[columns_to_show].to_string(index=False)}")
 
-        # Optional check: If all scores are zero or df is empty, we might want to stop here
-        if df.empty or df.loc[0, 'match_score'] == 0:
-            self.logger.warning("No candidates meet the given ranking criteria.")
-            return None
-
         # Select the best candidate (highest match_score)
         best_candidate_info = df.iloc[0].to_dict()
 
@@ -214,6 +210,7 @@ class AuthorRelations:
         # For reference, indicate how we arrived at this candidate
         self.phd_match_by = "ranking"
         self.title_open_alex = best_candidate_info['titles_open_alex']
+        self.title_similarities = best_candidate_info['title_similarities']
         self.max_title_similarity = best_candidate_info['max_similarity']
         self.n_close_matches = best_candidate_info['n_close_matches']
         self.exact_match = best_candidate_info['exact_match']
@@ -577,6 +574,7 @@ class AuthorRelations:
             'year', 
             'title', 
             'title_open_alex', 
+            'title_similarities',
             'max_title_similarity',
             'n_close_matches',
             'exact_match',
@@ -612,6 +610,7 @@ class AuthorRelations:
         phd_id = self.phd_candidate['id']
         phd_name = self.phd_candidate['display_name']
         title_open_alex = self.title_open_alex if self.title_open_alex else None # convert empty list to None
+        title_similarities = self.title_similarities if self.title_similarities else None # convert empty list to None
         max_title_similarity = self.max_title_similarity if self.max_title_similarity else None
         
         # Create a list of dictionaries for each supervisor
@@ -638,6 +637,7 @@ class AuthorRelations:
                 'year': self.year,
                 'title': self.title,
                 'title_open_alex': title_open_alex,
+                'title_similarities': title_similarities,
                 'max_title_similarity': max_title_similarity,
                 'n_close_matches': self.n_close_matches,
                 'exact_match': self.exact_match,
@@ -669,6 +669,7 @@ class AuthorRelations:
             result_row['year'] = self.year
             result_row['title'] = self.title
             result_row['title_open_alex'] = self.title_open_alex if self.title_open_alex else None # convert empty list to None
+            result_row['title_similarities'] = self.title_similarities if self.title_similarities else None
             result_row['max_title_similarity'] = self.max_title_similarity if self.max_title_similarity else None
             result_row['n_close_matches'] = self.n_close_matches
             result_row['exact_match'] = self.exact_match
