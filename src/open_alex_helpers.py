@@ -434,6 +434,8 @@ class AuthorRelations:
         self.potential_supervisors = []
 
         for idx, contributor_name in enumerate(self.contributors):
+            contributor_confirmed = False
+            
             self.logger.debug(f"Searching for contributor: {contributor_name}")
 
             # set flag for candidate being the first contributor in the underlying dataset
@@ -515,8 +517,9 @@ class AuthorRelations:
                         is_thesis_coauthor = True
 
                 if len(shared_publications_union) < self.n_shared_pubs_min:
-                    self.logger.debug("No shared publications found between PhD candidate and potential contributors. Moving to next contributor.")
-                    continue
+                    self.logger.debug("No shared publications found between PhD candidate and potential contributors. Contributor not confirmed.")
+                else:
+                    contributor_confirmed = True
                 
                 n_shared_inst_grad = len(all_shared_affiliations)
                 shared_dois = list(shared_publications_union)
@@ -524,6 +527,7 @@ class AuthorRelations:
                 # Build the merged supervisor data
                 supervisor_data = {
                     'supervisor': matching_candidates,  # list of all matching candidates
+                    'supervisor_confirmed': contributor_confirmed,
                     'contributor_rank': contributor_rank,
                     'same_grad_inst': same_grad_inst,  # True if at least one candidate has the same graduation institution
                     'n_shared_inst_grad': n_shared_inst_grad,  # total count of shared institutions across candidates
@@ -580,6 +584,7 @@ class AuthorRelations:
             'affiliation_match',
             'phd_match_score',
             'phd_match_by',
+            'contributor_confirmed',
             'contributor_name', 
             'contributor_id',
             'sup_match_by',
@@ -615,6 +620,7 @@ class AuthorRelations:
         for supervisor_data in self.potential_supervisors:
             supervisor = supervisor_data['supervisor']
             # with the implicit merging of all potential contributors, the contributor names and ids are become lists
+            contributor_confirmed = supervisor_data["supervisor_confirmed"]
             contributor_name = [supervisor_nested['display_name'] for supervisor_nested in supervisor]
             contributor_id = [supervisor_nested['id'] for supervisor_nested in supervisor]
             sup_match_by = supervisor_data['sup_match_by']
@@ -639,6 +645,7 @@ class AuthorRelations:
                 'affiliation_match': self.affiliation_match,
                 'phd_match_score': self.phd_match_score,
                 'phd_match_by': self.phd_match_by,
+                'contributor_confirmed': contributor_confirmed,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
                 'sup_match_by': sup_match_by,
