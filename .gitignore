@@ -13,5 +13,8 @@ contact_email.txt
 lookup_log.txt
 *.log
 
+# Open Alex API cache
+openalex_cache.sqlite
+
 # VS Code files
 settings.json
