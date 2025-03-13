@@ -227,11 +227,14 @@ class AuthorRelations:
         )
         
         # Get the thesis id (if present)
-        self.thesis_id = (
-            self.phd_publications
-            .query("title == @self.title_open_alex")
-            .first_valid_index()
-        )
+        if "title" in self.phd_publications.columns:
+            self.thesis_id = (
+                self.phd_publications
+                .query("title == @self.title_open_alex")
+                .first_valid_index()
+            )
+        else:
+            self.thesis_id = None
 
         self.logger.info(
             f"PhD candidate confirmed by {self.phd_match_by}: {self.phd_candidate['display_name']}"
