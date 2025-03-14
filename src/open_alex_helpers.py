@@ -117,7 +117,7 @@ class AuthorRelations:
         self.logger.info(f"Searching for PhD candidate: {self.phd_name}")
 
         # Search for candidates by PhD name
-        candidates = AuthorsWithRetry().search(self.phd_name).get()
+        candidates = Authors().search(self.phd_name).get()
         self.logger.debug(f"Found: {len(candidates)} people who are potential matches.")
 
         # If no candidates are found, log and return
@@ -221,7 +221,7 @@ class AuthorRelations:
         # Retrieve the publications for the best candidate
         # TODO with the above optimization, we can move this up
         self.phd_publications = pd.DataFrame(
-            WorksWithRetry()
+            Works()
             .filter(author={"id": self.phd_candidate['id']})
             .select(["id", "title", "doi", "type"]).get()
         )
@@ -314,10 +314,10 @@ class AuthorRelations:
             )
                 
         # Get the title of the PhD candidate's dissertation.
-        # WorksWithRetry returns a list, so if there are several matching works, we get all of them 
+        # Works returns a list, so if there are several matching works, we get all of them 
         # We then convert it into a dataframe to handle in more easily
         works_by_candidate = pd.DataFrame(
-            WorksWithRetry()
+            Works()
                 # Search for the title
                 # We don't do this right now so that we are not dependent on the search matching of
                 # Open Alex
@@ -442,7 +442,7 @@ class AuthorRelations:
             contributor_rank = idx + 1
             
             # Search for contributors in OpenAlex
-            openalex_candidates = AuthorsWithRetry().search(contributor_name).get()
+            openalex_candidates = Authors().search(contributor_name).get()
             self.logger.debug(f"Found: {len(openalex_candidates)} candidates for contributor '{contributor_name}'.")
             
             # If no candidates are found continue to next contributor
@@ -503,7 +503,7 @@ class AuthorRelations:
                         is_sup_in_pilot_dataset = True
                     
                     # Query publications for candidate contributor
-                    contrib_publications = WorksWithRetry() \
+                    contrib_publications = Works() \
                         .filter(author={"id": candidate['id']}) \
                         .select(["id", "doi"]) \
                         .get()
@@ -688,73 +688,6 @@ class AuthorRelations:
         return results_df
 
 
-# Wrapper classes for Authors() and Works() with backoff and retry logic
-class AuthorsWithRetry(Authors):
-    """
-    Wrapper around pyalex.Authors that retries on ConnectionError/ReadTimeout.
-    Usage example:
-        candidates = AuthorsWithRetry().search("John Doe").get()
-    """
-    
-    # Force the endpoint to remain "authors" to avoid inheritance of the URL search string from the class name
-    # when we don't do this, the search URL will become "https://api.openalex.org/authorswithretry?search=John+Doe"
-    def _full_collection_name(self):
-        # Force the endpoint to /authors
-        if self.params is not None and "q" in self.params.keys():
-            # If there's "q" in params, pyalex normally goes to /autocomplete/authors
-            return f"{config.openalex_url}/autocomplete/authors"
-        else:
-            return f"{config.openalex_url}/authors"
-
-    def get(self, max_retries=12, base_delay=2, **kwargs):
-        """
-        `get()` with quadratic backoff.
-        """
-        for attempt in range(1, max_retries + 1):
-            try:
-                return super().get(**kwargs)
-            except (ConnectionError, ReadTimeout) as err:
-                if attempt < max_retries:
-                    wait_time = base_delay * (attempt ** 2)
-                    print(f"[AuthorsWithRetry] Attempt {attempt} failed: {err}")
-                    print(f"Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
-                else:
-                    print("[AuthorsWithRetry] Max retries reached. Raising error.")
-                    raise
-
-
-class WorksWithRetry(Works):
-    """
-    Wrapper around pyalex.Works that retries on ConnectionError/ReadTimeout.
-    Usage example:
-        works = WorksWithRetry().filter(author={"id": "https://openalex.org/A1234"}).get()
-    """
-    
-    # Force the endpoint to remain "works" to avoid inheritance of the URL search string from the class name
-    # when we don't do this, the search URL will become "https://api.openalex.org/workswithretry?filter=author.id:https%3A%2F%2Fopenalex.org%2FA1234"
-    def _full_collection_name(self):
-        # Force the endpoint to /works
-        return f"{config.openalex_url}/works"
-
-    def get(self, max_retries=12, base_delay=2, **kwargs):
-        """
-        `get()` with quadratic backoff.
-        """
-        for attempt in range(1, max_retries + 1):
-            try:
-                return super().get(**kwargs)
-            except (ConnectionError, ReadTimeout) as err:
-                if attempt < max_retries:
-                    wait_time = base_delay * (attempt ** 2)
-                    print(f"[WorksWithRetry] Attempt {attempt} failed: {err}")
-                    print(f"Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
-                else:
-                    print("[WorksWithRetry] Max retries reached. Raising error.")
-                    raise
-
-
 def find_phd_and_supervisors_in_row(row, model):
     """
     Finds author relations information from a DataFrame row.
@@ -810,7 +743,7 @@ def fetch_author_openalex_names_ids(author: str) -> dict[str, str]:
         dict: A dictionary where keys are display names and values are OpenAlex IDs.
     """
     try:
-        search_results = AuthorsWithRetry().search(author).get()
+        search_results = Authors().search(author).get()
 
         # Process all matches into a dictionary
         return {
