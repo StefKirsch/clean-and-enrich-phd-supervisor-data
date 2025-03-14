@@ -12,6 +12,7 @@ remove_entries_with_comma.py
 contact_email.txt
 lookup_log.txt
 *.log
+dataset_config.yaml
 
 # Open Alex API cache
 openalex_cache.sqlite
