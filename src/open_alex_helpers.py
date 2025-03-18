@@ -31,7 +31,7 @@ class AuthorRelations:
         self.thesis_id = None # OpenAlex ID of the thesis
         self.year = year
         self.institution = institution
-        self.phd_publications = []
+        self.phd_publications = [] # OpenAlex data for the works of the author with the OpenAlex ID we identified for the PhD candidate
         self.contributors = contributors
         self.years_tolerance = years_tolerance
         self.phd_candidate = None
@@ -115,7 +115,7 @@ class AuthorRelations:
         If in debug mode, print a table representation of the sorted DataFrame.
         """
         self.logger.info(f"Searching for PhD candidate: {self.phd_name}")
-
+        
         # Search for candidates by PhD name
         candidates = Authors().search(self.phd_name).get()
         self.logger.debug(f"Found: {len(candidates)} people who are potential matches.")
@@ -125,26 +125,40 @@ class AuthorRelations:
             self.logger.warning("No candidates found with the given PhD name.")
             return None
 
+        # Allocate data frame for works of PhD candidates
+        df_works = pd.DataFrame()
+        
         # Collect raw and processed info for all candidates
         candidates_info = []
         for candidate in candidates:
+            
             self.logger.debug(f"Evaluating candidate: {candidate['display_name']} (ID: {candidate['id']})")
             affiliation_match = self.check_affiliation(candidate)
 
-            # This returns lists for the OpenAlex IDs, the titles, and the similarities
-            # sorted in descending order by similarity.
-            ids_open_alex, titles_open_alex, title_similarities = self.check_authored_work(candidate)
+            # Retrieve the publications for the current candidate
+            df_works_candidate = get_authored_works(author_id=candidate["id"], author_name=candidate["display_name"])
             
-            # TODO Potential Optimization
-            # instead of just getting the dissertation and similarity here, we can also get all the
-            # works of the candidate right away here as a works object and convert it to a dataframe
-            # we can then perform all checks on that dataframe. If we manage to confirm the candidate as the PhD,
-            # we break out of the loop, but the df sticks around. So we can then do all further checks and
-            # operations on the dataframe we got from the confirmed candidate
-            # We can then completely get rid of the `check_authored_work` method.
-            # Maybe we can add a method for the checking logic though.
-        
-            max_similarity = title_similarities[0] if len(title_similarities) > 0 else 0.0
+            df_works_candidate = compute_and_sort_works_by_title_similarities(
+                df_works_candidate, 
+                reference_title=self.title, 
+                model=self.model
+                )
+            
+            df_works_candidate_in_target_years = get_works_in_target_years(
+                df_works_candidate, 
+                year=self.year, 
+                years_offset=self.years_offset_phd_matching
+                )
+            
+            work_ids_open_alex_in_target_years = df_works_candidate_in_target_years["work_id"].tolist()
+            titles_open_alex_in_target_years = df_works_candidate_in_target_years["title"].tolist()
+            
+            # Calculate the maximum similarity
+            if not df_works_candidate_in_target_years.empty: # check if data frame has rows
+                title_similarities_in_target_years = df_works_candidate_in_target_years["similarity"].tolist()
+                max_similarity = max(title_similarities_in_target_years, default=0.0)
+            else:
+                max_similarity = 0.0  # No data means similarity is 0.0
 
             # Quantify degree of match and number of close matches
             
@@ -153,16 +167,16 @@ class AuthorRelations:
             # non-semantic differences.
             exact_match = (max_similarity >= 0.99)
             near_exact_match = (max_similarity >= 0.9)
-            close_matches = [val for val in title_similarities if val >= self.similarity_cutoff]
+            close_matches = [val for val in title_similarities_in_target_years if val >= self.similarity_cutoff]
             n_close_matches = len(close_matches)
 
             candidates_info.append({
                 'candidate': candidate,
                 'candidate_name': candidate['display_name'],
                 'candidate_id': candidate['id'],
-                'ids_open_alex': ids_open_alex,
-                'titles_open_alex': titles_open_alex,
-                'title_similarities': title_similarities,
+                'ids_open_alex': work_ids_open_alex_in_target_years,
+                'titles_open_alex': titles_open_alex_in_target_years,
+                'title_similarities': title_similarities_in_target_years,
                 'max_similarity': max_similarity,
                 'exact_match': exact_match,
                 'near_exact_match': near_exact_match,
@@ -170,26 +184,29 @@ class AuthorRelations:
                 'n_close_matches': n_close_matches,
                 'affiliation_match': affiliation_match
             })
-
+            
+            # Append the works of the open alex author to the dataframe of all potential works of the phd candidate 
+            df_works = pd.concat([df_works, df_works_candidate], ignore_index=True)
+        
         # Convert to a DataFrame for ranking
-        df = pd.DataFrame(candidates_info)
+        candidates_info_with_scores = pd.DataFrame(candidates_info)
 
         # Assign 'match_score' using given criteria
         # 1. Number of close matches
         # 2. +50 if we have an exact match
         # 3. +20 if we have a near exact match
         # 4. +20 if we have an affiliation match
-        df = df.assign(
+        candidates_info_with_scores = candidates_info_with_scores.assign(
             match_score=(
-                df['n_close_matches']
-                + df['exact_match'].astype(int) * 50
-                + df['near_exact_match'].astype(int) * 20
-                + df['affiliation_match'].astype(int) * 20
+                candidates_info_with_scores['n_close_matches']
+                + candidates_info_with_scores['exact_match'].astype(int) * 50
+                + candidates_info_with_scores['near_exact_match'].astype(int) * 20
+                + candidates_info_with_scores['affiliation_match'].astype(int) * 20
             )
         )
 
         # Sort by match_score descending
-        df = df.sort_values('match_score', ascending=False, ignore_index=True)
+        candidates_info_with_scores = candidates_info_with_scores.sort_values('match_score', ascending=False, ignore_index=True)
 
         # If logger is in debug mode, print the ranked table
         if self.logger.isEnabledFor(logging.DEBUG):
@@ -198,10 +215,13 @@ class AuthorRelations:
                 'candidate_name', 'candidate_id', 'match_score',
                 'max_similarity', 'n_close_matches', 'exact_match', 'near_exact_match', 'affiliation_match'
             ]
-            self.logger.debug(f"Ranked candidates:\n{df[columns_to_show].to_string(index=False)}")
+            self.logger.debug(f"Ranked candidates:\n{candidates_info_with_scores[columns_to_show].to_string(index=False)}")
 
-        # Select the best candidate (highest match_score)
-        best_candidate_info = df.iloc[0].to_dict()
+        # Select the row of the best candidate (highest match_score) and convert that to dict
+        best_candidate_info = candidates_info_with_scores.iloc[0].to_dict()
+        
+        # Store the publication of the best candidate in a class variable
+        self.phd_publications = df_works.query("author_id == @best_candidate_info['candidate_id']")
 
         # get the number of name search matches for the candidate name in NARCIS
         self.n_name_search_matches = len(candidates)
@@ -217,14 +237,6 @@ class AuthorRelations:
         self.near_exact_match = best_candidate_info['near_exact_match']
         self.affiliation_match = best_candidate_info['affiliation_match']
         self.phd_match_score = best_candidate_info['match_score']
-
-        # Retrieve the publications for the best candidate
-        # TODO with the above optimization, we can move this up
-        self.phd_publications = pd.DataFrame(
-            Works()
-            .filter(author={"id": self.phd_candidate['id']})
-            .select(["id", "title", "doi", "type"]).get()
-        )
         
         # Get the thesis id (if present)
         if "title" in self.phd_publications.columns:
@@ -686,6 +698,102 @@ class AuthorRelations:
             results_df = pd.DataFrame(results_list, columns=columns)
 
         return results_df
+
+
+def get_authored_works(author_id: str, author_name: str) -> pd.DataFrame:
+    """
+    Returns a DataFrame containing the works authored by the candidate.
+    """ 
+    
+    # Do the API call
+    works = pd.DataFrame(
+        Works()
+        .filter(author={"id": author_id})
+        .select(["id", "title", "doi", "publication_year", "type"])
+        .get()
+        )
+    
+    # Make it clear that the id we got here is the work id
+    works = works.rename(columns={'id': 'work_id'})
+
+    # Add the authorship of the author we're looking at
+    works.insert(0, "author_id", author_id)
+    works.insert(1, "author_name", author_name)
+    
+    return works
+
+def get_works_in_target_years(works: pd.DataFrame, year: int, years_offset: list[int]) -> pd.DataFrame:
+    """
+    Filter out the works in the target years from a DataFrame containing works.
+
+    Parameters:
+    - works (pd.DataFrame): Dataframe containing works.
+    - year (int): The reference year.
+    - years_offset (list): Allowed year offsets.
+
+    Returns:
+    - pd.DataFrame: works, but with all the publications outside the target years removed
+    """
+    
+    # Minimum and maximum years we want to consider publications from
+    # These variables might appear unnused, but they are used in query below
+    min_year = year - years_offset[0]
+    max_year = year + years_offset[1]
+    
+    # Filter out publications outside of the range that we want to consider
+    works_in_target_years = works.query("@min_year <= publication_year <= @max_year")
+    
+    return works_in_target_years
+    
+def compute_and_sort_works_by_title_similarities(works: pd.DataFrame, reference_title: str, model) -> pd.DataFrame:
+    """
+    Computes the similarity between each title in the given Series and the reference title.
+
+    Parameters:
+    - works (pd.DataFrame): Dataframe containing works.
+    - reference_title (str): The reference title to compare the work titles against.
+    - model: The similarity model.
+
+    Returns:
+    - pd.DataFrame: works, but with a new column similarity and with the rows sorted descending by similarity
+    """
+    
+    reference_title_norm = (
+            # Remove illegal characters from the title and lowercase to make search() robust 
+            # (most importantly remove pipe characters "|", which search() interprets as OR)
+            # Lowercase the title mostly to allow a more reasonable similarity calculation later.
+            # Similarity is very sensitive to capitalization, but since that is not very consistent between
+            # OpenAlex and Narcis, we get rid of it now.
+            
+            # if we don't get a string back, replace with an empty string so .similarity() doesn't error out
+            remove_illegal_title_characters(reference_title).lower() 
+            if isinstance(reference_title, str) 
+            else "" 
+    )
+    
+    title_similarities = []
+    
+    if reference_title_norm and works["title"].any():
+        # Encode string document
+        emb1 = model.encode(reference_title_norm, convert_to_tensor=True, show_progress_bar=False)
+        
+        for title in works["title"]:
+            emb2 = model.encode(title, convert_to_tensor=True, show_progress_bar=False)
+            
+            # if we have a proper encoding for both documents, we calculate similarity
+            if emb1 is not None and emb2 is not None:
+                similarity = util.cos_sim(emb1, emb2)
+            else:
+                similarity = 0.0
+                
+            title_similarities.append(similarity.item())
+    
+    # assign to column or 0 similarity
+    works["similarity"] = title_similarities if title_similarities else [0.0] * len(works)
+
+    works = works.sort_values("similarity", ascending=False)
+    
+    return works
 
 
 def find_phd_and_supervisors_in_row(row, model):
