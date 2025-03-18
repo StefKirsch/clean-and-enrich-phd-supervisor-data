@@ -1,9 +1,8 @@
 import logging
 from pyalex import Authors, Works, config
 import pandas as pd
+import numpy as np
 from os import path, makedirs
-import time
-from requests.exceptions import ConnectionError, ReadTimeout
 from sentence_transformers import util
 
 from src.io_helpers import fetch_supervisors_from_pilot_dataset, remove_illegal_title_characters, ordinal
@@ -771,25 +770,33 @@ def compute_and_sort_works_by_title_similarities(works: pd.DataFrame, reference_
             else "" 
     )
     
-    title_similarities = []
+    # Encode the reference title if valid.
+    emb1 = (
+        model.encode(reference_title_norm, convert_to_tensor=True, show_progress_bar=False)
+        if reference_title_norm
+        else None
+    )
     
-    if reference_title_norm and works["title"].any():
-        # Encode string document
-        emb1 = model.encode(reference_title_norm, convert_to_tensor=True, show_progress_bar=False)
-        
+    # Process each title in 'works["title"]', skipping missing or empty strings.
+    # Skip, if reference title was not valid
+    if emb1 is None:
+        title_similarities = [np.nan] * len(works)
+    else:
+        title_similarities = []
         for title in works["title"]:
-            emb2 = model.encode(title, convert_to_tensor=True, show_progress_bar=False)
-            
-            # if we have a proper encoding for both documents, we calculate similarity
-            if emb1 is not None and emb2 is not None:
-                similarity = util.cos_sim(emb1, emb2)
-            else:
-                similarity = 0.0
+            if isinstance(title, str) and title.strip():
+                # same processing as for reference title
+                processed_title = remove_illegal_title_characters(title).lower()
+                emb2 = model.encode(processed_title, convert_to_tensor=True, show_progress_bar=False)
                 
-            title_similarities.append(similarity.item())
-    
+                # compute cosine similarity
+                similarity = util.cos_sim(emb1, emb2).item() if emb2 is not None else np.nan
+            else:
+                similarity = np.nan
+            title_similarities.append(similarity)
+        
     # assign to column or 0 similarity
-    works["similarity"] = title_similarities if title_similarities else [0.0] * len(works)
+    works["similarity"] = title_similarities if title_similarities else [np.nan] * len(works)
 
     works = works.sort_values("similarity", ascending=False)
     
