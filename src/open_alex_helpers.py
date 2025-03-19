@@ -157,6 +157,7 @@ class AuthorRelations:
                 title_similarities_in_target_years = df_works_candidate_in_target_years["similarity"].tolist()
                 max_similarity = max(title_similarities_in_target_years, default=0.0)
             else:
+                title_similarities_in_target_years = []
                 max_similarity = 0.0  # No data means similarity is 0.0
 
             # Quantify degree of match and number of close matches
@@ -733,16 +734,19 @@ def get_works_in_target_years(works: pd.DataFrame, year: int, years_offset: list
     Returns:
     - pd.DataFrame: works, but with all the publications outside the target years removed
     """
+        
+    if not works.empty:
+        # Minimum and maximum years we want to consider publications from
+        # These variables might appear unnused, but they are used in query below
+        min_year = year - years_offset[0]
+        max_year = year + years_offset[1]
+        
+        # Filter out publications outside of the range that we want to consider
+        return works.query("@min_year <= publication_year <= @max_year")
+        
+    else:
+        return works
     
-    # Minimum and maximum years we want to consider publications from
-    # These variables might appear unnused, but they are used in query below
-    min_year = year - years_offset[0]
-    max_year = year + years_offset[1]
-    
-    # Filter out publications outside of the range that we want to consider
-    works_in_target_years = works.query("@min_year <= publication_year <= @max_year")
-    
-    return works_in_target_years
     
 def compute_and_sort_works_by_title_similarities(works: pd.DataFrame, reference_title: str, model) -> pd.DataFrame:
     """
