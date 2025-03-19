@@ -778,8 +778,8 @@ def compute_and_sort_works_by_title_similarities(works: pd.DataFrame, reference_
     )
     
     # Process each title in 'works["title"]', skipping missing or empty strings.
-    # Skip, if reference title was not valid
-    if emb1 is None:
+    # Skip, if reference title was not valid or if the works df has no rows
+    if emb1 is None or not len(works):
         title_similarities = [np.nan] * len(works)
     else:
         title_similarities = []
