@@ -705,12 +705,15 @@ def get_authored_works(author_id: str, author_name: str) -> pd.DataFrame:
     Returns a DataFrame containing the works authored by the candidate.
     """ 
     
+    properties_to_select = ["id", "title", "doi", "publication_year", "type"]
+    
     # Do the API call
     works = pd.DataFrame(
         Works()
         .filter(author={"id": author_id})
-        .select(["id", "title", "doi", "publication_year", "type"])
-        .get()
+        .select(properties_to_select)
+        .get(),
+        columns=properties_to_select # make sure the dataframe has these columns, even when it's empty
         )
     
     # Make it clear that the id we got here is the work id
