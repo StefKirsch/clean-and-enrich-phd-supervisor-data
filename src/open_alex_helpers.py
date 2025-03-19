@@ -802,7 +802,7 @@ def compute_and_sort_works_by_title_similarities(works: pd.DataFrame, reference_
                 similarity = np.nan
             title_similarities.append(similarity)
         
-    # assign to column or 0 similarity
+    # assign to column of np.nan similarity
     works["similarity"] = title_similarities if title_similarities else [np.nan] * len(works)
 
     works = works.sort_values("similarity", ascending=False)
