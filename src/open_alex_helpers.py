@@ -440,7 +440,7 @@ class AuthorRelations:
                     contrib_dois = df_works_contrib["doi"].tolist()
                     # Merge shared publication DOIs across candidates and add to set
                     # of earlier found shared publications
-                    shared_publications_union.update(set(phd_dois).intersection(contrib_dois))
+                    shared_publications_union.update(set(phd_dois).intersection(set(contrib_dois)))
                     
                     # Check if candidate is a thesis coauthor
                     if self.thesis_id in df_works_contrib["work_id"].tolist():
