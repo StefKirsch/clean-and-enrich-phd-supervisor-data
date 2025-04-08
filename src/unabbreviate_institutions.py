@@ -8,7 +8,7 @@ from pyalex import Institutions
 # All long names were discovered with a bit of detective work and then looked up in OpenAlex and a verbatim version that is named there was added. 
 # The version that is chosen is either a display name or a display name alternative verbatim from Open alex
 institution_translation = {
-    'amcpub': 'Amsterdam UMC Location University of Amsterdam', # UMC location AMC, historically associated with UvA, https://api.openalex.org/institutions?search=Centrum%20Wiskunde%20Informatica
+    'amcpub': 'Amsterdam UMC Location University of Amsterdam', # UMC location AMC, historically associated with UvA, https://api.openalex.org/institutions?search=vumc
     'buas': 'Breda University of Applied Sciences', # https://api.openalex.org/institutions?search=Breda%20University%20of%20Applied%20Sciences
     'cwi': 'Centrum Wiskunde & Informatica', # https://api.openalex.org/institutions?search=Centrum%20Wiskunde%20Informatica
     'eur': 'Erasmus University Rotterdam', # https://api.openalex.org/institutions?search=Naturalis%20Biodiversity%20Center
