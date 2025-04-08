@@ -8,7 +8,7 @@ from pyalex import Institutions
 # All long names were discovered with a bit of detective work and then looked up in OpenAlex and a verbatim version that is named there was added. 
 # The version that is chosen is either a display name or a display name alternative verbatim from Open alex
 institution_translation = {
-    'amcpub': 'Academic Medical Center', # UMC location AMC, historically associated with UvA, https://api.openalex.org/institutions?search=Centrum%20Wiskunde%20Informatica
+    'amcpub': 'Amsterdam UMC Location University of Amsterdam', # UMC location AMC, historically associated with UvA, https://api.openalex.org/institutions?search=Centrum%20Wiskunde%20Informatica
     'buas': 'Breda University of Applied Sciences', # https://api.openalex.org/institutions?search=Breda%20University%20of%20Applied%20Sciences
     'cwi': 'Centrum Wiskunde & Informatica', # https://api.openalex.org/institutions?search=Centrum%20Wiskunde%20Informatica
     'eur': 'Erasmus University Rotterdam', # https://api.openalex.org/institutions?search=Naturalis%20Biodiversity%20Center
@@ -16,23 +16,23 @@ institution_translation = {
     'hanzepure': 'Hanze University of Applied Sciences', # https://api.openalex.org/institutions?search=Hanze%20University%20of%20Applied%20Sciences
     'lumc': 'Leiden University Medical Center', # https://api.openalex.org/institutions?search=Leiden%20University%20Medical%20Center
     'naturalis': 'Naturalis Biodiversity Center', # https://api.openalex.org/institutions?search=Naturalis%20Biodiversity%20Center
-    'ou': 'Open Universiteit Nederland', # https://api.openalex.org/institutions?search=Open%20Universiteit%20Nederland
+    'ou': 'Open University of the Netherlands', # https://api.openalex.org/institutions?search=Open%20Universiteit%20Nederland
     'ru': 'Radboud University Nijmegen', # https://api.openalex.org/institutions?search=Radboud%20University
     'rug': 'University of Groningen', # https://api.openalex.org/institutions?search=University%20of%20Groningen
     'tno': 'Netherlands Organisation for Applied Scientific Research', # https://api.openalex.org/institutions?search=Netherlands%20Organisation%20for%20Applied%20Scientific%20Research
     'tud': 'Delft University of Technology', # https://api.openalex.org/institutions?search=Delft%20University%20of%20Technology
     'tue': 'Eindhoven University of Technology', # https://api.openalex.org/institutions?search=Eindhoven%20University%20of%20Technology
-    'ul': 'Universiteit Leiden', # https://api.openalex.org/institutions?search=Universiteit%20Leiden
+    'ul': 'Leiden University', # https://api.openalex.org/institutions?search=Universiteit%20Leiden
     'uls': 'Utrecht University', # this abbreviation ocurred only for one thesis. I looked it up and it was written with UU.
-    'um': 'Universiteit Maastricht', # https://api.openalex.org/institutions?search=Universiteit%20Maastricht
+    'um': 'Maastricht University', # https://api.openalex.org/institutions?search=Universiteit%20Maastricht
     'umcu': 'Maastricht University Medical Centre', # https://api.openalex.org/institutions?search=Maastricht%20University%20Medical%20Centre
-    'ut': 'Universiteit Twente', # https://api.openalex.org/institutions?search=Universiteit%20Twente 
+    'ut': 'University of Twente', # https://api.openalex.org/institutions?search=Universiteit%20Twente 
     'uu': 'Utrecht University',
     'uvapub': 'University of Amsterdam',
     'uvh': 'University of Humanistic Studies',
     'uvt': 'Tilburg University',
     'vu': 'Vrije Universiteit Amsterdam', # https://api.openalex.org/institutions?search=Vrije%20Universiteit%20Amsterdam
-    'vumc': 'Amsterdam UMC Location VUmc', # https://api.openalex.org/institutions?search=Amsterdam%20UMC%20Location%20VUmc
+    'vumc': 'Amsterdam UMC Location Vrije Universiteit Amsterdam', # https://api.openalex.org/institutions?search=Amsterdam%20UMC%20Location%20VUmc
     'wur': 'Wageningen University & Research' # https://api.openalex.org/institutions?search=Wageningen%20University%20Research
 }
 
