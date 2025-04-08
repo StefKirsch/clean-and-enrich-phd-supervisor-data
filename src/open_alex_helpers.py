@@ -285,7 +285,7 @@ class AuthorRelations:
 
         return match_found
 
-    def get_candidate_affiliations(self, candidate, in_target_years=True):
+    def get_candidate_affiliations(self, candidate, in_target_years=True, must_be_dutch = False):
         """
         Returns a set of institution names that the candidate was affiliated with.
 
@@ -293,19 +293,41 @@ class AuthorRelations:
             candidate (dict): The candidate author object containing affiliation data.
             in_target_years (bool): If True, only include affiliations within the target years.
                                     If False, include all affiliations regardless of year.
+            must_be_dutch (bool): If True, check if author every worked a t a Dutch institution
+                                    and if not, return empty set.
 
         Returns:
             set: A set of institution names affiliated with the candidate.
         """
         affiliations = candidate.get('affiliations', [])
         institutions = set()
+        
+        dutch_institution = False
+        
         for affiliation in affiliations:
             institution_name = affiliation['institution']['display_name']
+            
+            # Verify if the institution name is in the Dutch name translation dictionary
+            if affiliation['institution']['country_code'] == 'NL':
+                dutch_institution = True
+            
             affiliation_years = affiliation.get('years', [])
             
             if not in_target_years or self.affiliation_target_years.intersection(affiliation_years):
                 institutions.add(institution_name)
-        return institutions
+        
+        if not must_be_dutch or dutch_institution:
+            self.logger.debug(
+                f"Found {len(institutions)} affiliation(s) for candidate '{candidate['display_name']}': {institutions}"
+            )
+            
+            return institutions
+        else:
+            self.logger.debug(
+                f"'{candidate['display_name']}' has not been affiliated with a Dutch institution. Returning empty set."
+            )
+            
+            return set()
     
     def check_authored_work(self, candidate):
         """
@@ -469,12 +491,12 @@ class AuthorRelations:
             matching_candidates = [
                 candidate for candidate in openalex_candidates
                 if phd_affiliations_at_graduation.intersection(
-                    self.get_candidate_affiliations(candidate, in_target_years=True)
+                    self.get_candidate_affiliations(candidate, in_target_years=True, must_be_dutch = True)
                 )
             ]
             # Log the number of affiliation matches among candidates
             self.logger.debug(
-                f"Found {len(matching_candidates)} affiliation match(es) among {len(openalex_candidates)} search matches for name '{contributor_name}'"
+                f"Found {len(matching_candidates)} people with affiliation match(es) among {len(openalex_candidates)} search matches for name '{contributor_name}'"
             )
 
             # Open Alex has a lot partial duplicates of authors, especially for ones that are
