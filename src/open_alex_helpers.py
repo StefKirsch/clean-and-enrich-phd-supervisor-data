@@ -162,7 +162,7 @@ class AuthorRelations:
 
             # Quantify degree of match and number of close matches
             
-            # We do dot require 1.0, because some models like specter are very strict for giving a perfect score.
+            # We do not require 1.0, because some models like specter are very strict for giving a perfect score.
             # A manual evaluation for specter showed that values of 0.99 and more were always exact matches, with only 
             # non-semantic differences.
             exact_match = (max_similarity >= 0.99)
