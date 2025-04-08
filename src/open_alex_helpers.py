@@ -435,17 +435,15 @@ class AuthorRelations:
                         is_sup_in_pilot_dataset = True
                     
                     # Query publications for candidate contributor
-                    contrib_publications = Works() \
-                        .filter(author={"id": candidate['id']}) \
-                        .select(["id", "doi"]) \
-                        .get()
-                    contrib_dois = [pub["doi"] for pub in contrib_publications]
+                    df_works_contrib = get_authored_works(author_id=candidate["id"], author_name=candidate["display_name"])
+
+                    contrib_dois = df_works_contrib["doi"].tolist()
                     # Merge shared publication DOIs across candidates and add to set
                     # of earlier found shared publications
                     shared_publications_union.update(set(phd_dois).intersection(contrib_dois))
                     
                     # Check if candidate is a thesis coauthor
-                    if self.thesis_id in [pub["id"] for pub in contrib_publications]:
+                    if self.thesis_id in df_works_contrib["work_id"].tolist():
                         is_thesis_coauthor = True
 
                 if len(shared_publications_union) < self.n_shared_pubs_min:
