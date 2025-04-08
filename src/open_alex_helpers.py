@@ -551,7 +551,7 @@ class AuthorRelations:
         results_list = []
         for supervisor_data in self.potential_supervisors:
             supervisor = supervisor_data['supervisor']
-            # with the implicit merging of all potential contributors, the contributor names and ids are become lists
+            # with the implicit merging of all potential contributors, the contributor names and ids become lists
             contributor_confirmed = supervisor_data["supervisor_confirmed"]
             contributor_name = [supervisor_nested['display_name'] for supervisor_nested in supervisor]
             contributor_id = [supervisor_nested['id'] for supervisor_nested in supervisor]
