@@ -335,68 +335,87 @@ class AuthorRelations:
         Based on relationships between `self.phd_candidate` and contributors collect metadata that indicates supervision. 
         
         We look up contributors in OpenAlex. We confirm that we matched the contributor name with an author in OpenAlex
-        by requiring at least *one* shared affiliation in the time window (target years) of the publication of the thesis.  
+        by requiring *either* shared institution in the time window (target years) of the thesis publication, *or*
+        at least *one* shared publication DOI.  
         
-        Every confirmed contributor is added to the final dataset, the only difference for them will be the metadata that we collect here
-        
-        The following metadata will be collected per confirmed contributor:
+        Every contributor yields a results dictionary, even if not confirmed. Unmatched contributors get placeholder values.
+        The following metadata will be collected per contributor:
+        'contributor_name_narcis': original name used from NARCIS -> str
         'contributor_rank': Rank of contributor based on the order they are mentioned in the dataset -> int
-        'grad_inst': Phd and contributor shared institution in the time window of the thesis publication -> bool
-        'n_shared_inst_grad': Number of institutions PhD candidate and contributor share at the time of graduation -> int
-        'is_sup_in_pilot_dataset': Contributor is mentioned in the pilot dataset -> bool
+        'supervisor': List of matched OpenAlex candidate records -> list
+        'supervisor_confirmed': True if confirmation criteria met -> bool
+        'same_grad_inst': True if PhD and any candidate share institution at graduation -> bool
+        'n_shared_inst_grad': Number of institutions PhD candidate and contributors share at graduation -> int
+        'is_sup_in_pilot_dataset': True if any candidate is in pilot dataset -> bool
+        'sup_match_by': Description of matching criterion -> str
+        'n_shared_pubs': Total number of shared publication DOIs -> int
+        'shared_pubs': List of shared publication DOIs -> list
+        'is_thesis_coauthor': True if any candidate coauthored the thesis -> bool
         """
-        
         if not self.phd_candidate:
             self.logger.warning("PhD candidate not confirmed. Cannot find potential supervisors.")
             return []
-        
-        # Get PhD candidate's affiliations
-        phd_affiliations_at_graduation = self.get_candidate_affiliations(self.phd_candidate, in_target_years=True)
-        
-        # If the PhD candidate has no affiliations in the target years, return an empty list
+
+        # Get PhD candidate's affiliations at graduation
+        phd_affiliations_at_graduation = self.get_candidate_affiliations(
+            self.phd_candidate, in_target_years=True
+        )
         if not phd_affiliations_at_graduation:
-            self.logger.warning("PhD candidate has no affiliations in target years. Cannot find potential supervisors.")
+            self.logger.warning(
+                "PhD candidate has no affiliations in target years. Cannot find potential supervisors."
+            )
             return []
-        
-        # Log the target institutions (affiliations of the PhD candidate in the target years)
-        self.logger.debug(f"Target Institutions: {phd_affiliations_at_graduation}, Target Years: {self.affiliation_target_years}")
+
+        self.logger.debug(
+            f"Target Institutions: {phd_affiliations_at_graduation}, Target Years: {self.affiliation_target_years}"
+        )
         self.logger.info("Searching for potential supervisors among contributors.")
-        
-        # Initialize list to store supervisor data
+
         self.potential_supervisors = []
+        phd_dois = self.phd_publications["doi"].tolist()
 
         for idx, contributor_name in enumerate(self.contributors):
-            contributor_confirmed = False
-            
-            self.logger.debug(f"Searching for contributor: {contributor_name}")
-
-            # set flag for candidate being the first contributor in the underlying dataset
             contributor_rank = idx + 1
-            
+            self.logger.debug(f"Processing contributor #{contributor_rank}: {contributor_name}")
+
+            # Prepare default placeholder data
+            supervisor_data = {
+                'contributor_name_narcis': contributor_name,
+                'name_matches_open_alex': [],
+                'contributor_rank': contributor_rank,
+                'supervisor': [],
+                'supervisor_confirmed': False,
+                'same_grad_inst': False,
+                'n_shared_inst_grad': 0,
+                'is_sup_in_pilot_dataset': False,
+                'sup_match_by': '',
+                'n_shared_pubs': 0,
+                'shared_pubs': [],
+                'is_thesis_coauthor': False
+            }
+
             # Search for contributors in OpenAlex
             openalex_candidates = Authors().search(contributor_name).get()
-            self.logger.debug(f"Found: {len(openalex_candidates)} candidates for contributor '{contributor_name}'.")
-            
-            # If no candidates are found continue to next contributor
-            if not openalex_candidates:
-                self.logger.debug(f"No candidates found for contributor: {contributor_name}. Moving to next contributor.")
-                continue
-            
-            # Prepare contributor_has_shared_affiliations flag
-            contributor_has_shared_affiliations = False
-            
-            # Use a list comprehension to collect all candidates with a shared affiliation
-            matching_candidates = [
-                candidate for candidate in openalex_candidates
-                if phd_affiliations_at_graduation.intersection(
-                    self.get_candidate_affiliations(candidate, in_target_years=True, must_be_dutch = True)
-                )
-            ]
-            # Log the number of affiliation matches among candidates
             self.logger.debug(
-                f"Found {len(matching_candidates)} people with affiliation match(es) among {len(openalex_candidates)} search matches for name '{contributor_name}'"
+                f"Found {len(openalex_candidates)} OpenAlex candidates for '{contributor_name}'."
             )
 
+            if not openalex_candidates:
+                self.logger.debug(
+                    f"No OpenAlex matches for '{contributor_name}'. Adding placeholder entry."
+                )
+                self.potential_supervisors.append(supervisor_data)
+                continue
+
+            # Identify candidates with either shared institution or shared publications
+            name_matches_open_alex = [] # Name match with OpenAlex
+            matching_candidates = [] # Confirmed candidates
+            shared_pub_union = set()
+            all_shared_affils = set()
+            same_grad_inst_flag = False
+            pilot_flag = False
+            thesis_coauthor_flag = False
+ 
             # Open Alex has a lot partial duplicates of authors, especially for ones that are
             # later in their career.
             # We thus decided to implicitly merge all of the matches, i.e. candidates that we find with
@@ -404,89 +423,62 @@ class AuthorRelations:
             # This means that we set the boolean flags to True if they apply to (at least) ONE of the
             # matched potential contributors and that we collect the shared publication between the
             # PhD candidate and ALL of the matched potential contributors. 
-            if matching_candidates:
-                # Initialize aggregated variables for merging candidate info
-                all_shared_affiliations = set()
-                same_grad_inst = False
-                is_sup_in_pilot_dataset = False
-                shared_publications_union = set()
-                is_thesis_coauthor = False
-
-                # Get PhD candidate publication DOIs once
-                phd_dois = self.phd_publications["doi"].tolist()
-
-                # Loop through each matching candidate
-                for id_cand, candidate in enumerate(matching_candidates):
-                    
-                    self.logger.debug(
-                        f"Evaluating and merging data for the {ordinal(id_cand+1)} of {len(matching_candidates)} potential contributors: {candidate['display_name']} ({candidate['id']})"
-                    )
-                    
-                    candidate_affiliations = self.get_candidate_affiliations(candidate, in_target_years=True)
-                    candidate_shared_affils = phd_affiliations_at_graduation.intersection(candidate_affiliations)
-                    all_shared_affiliations.update(candidate_shared_affils)
-                    
-                    # Check if candidate meets same_grad_inst criterion
-                    if self.institution in candidate_shared_affils:
-                        same_grad_inst = True
-                    
-                    # Check if candidate is in the pilot dataset
-                    if candidate['id'] in self.__class__.supervisors_in_pilot_dataset.values():
-                        is_sup_in_pilot_dataset = True
-                    
-                    # Query publications for candidate contributor
-                    df_works_contrib = get_authored_works(author_id=candidate["id"], author_name=candidate["display_name"])
-                    
-                    contrib_dois = df_works_contrib["doi"].tolist()
-                    
-                    # Merge shared publication DOIs across candidates and add to set
-                    # of earlier found shared publications
-                    shared_publications_union.update(set(phd_dois).intersection(set(contrib_dois)))
-                    
-                    # Check if candidate is a thesis coauthor
-                    if self.thesis_id in df_works_contrib["work_id"].tolist():
-                        is_thesis_coauthor = True
-
-                if len(shared_publications_union) < self.n_shared_pubs_min:
-                    self.logger.debug("No shared publications found between PhD candidate and potential contributors. Contributor not confirmed.")
-                else:
-                    contributor_confirmed = True
-                
-                n_shared_inst_grad = len(all_shared_affiliations)
-                shared_dois = list(shared_publications_union)
-
-                # Build the merged supervisor data
-                supervisor_data = {
-                    'supervisor': matching_candidates,  # list of all matching candidates
-                    'supervisor_confirmed': contributor_confirmed,
-                    'contributor_rank': contributor_rank,
-                    'same_grad_inst': same_grad_inst,  # True if at least one candidate has the same graduation institution
-                    'n_shared_inst_grad': n_shared_inst_grad,  # total count of shared institutions across candidates
-                    'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,  # True if at least one candidate is in the pilot dataset
-                    'sup_match_by': f"Name match, shared institution at graduation and >={self.n_shared_pubs_min} shared publications.",
-                    'n_shared_pubs': len(shared_dois),  # total number of shared DOIs
-                    'shared_pubs': shared_dois,  # list of shared publication DOIs
-                    'is_thesis_coauthor': is_thesis_coauthor  # True if at least one candidate coauthored the thesis
-                }
-                self.potential_supervisors.append(supervisor_data)
-                self.logger.info(
-                    f"Merge of {len(matching_candidates)} potential contributors yielded {n_shared_inst_grad} shared institution(s) at graduation and {len(shared_dois)} shared publication(s)."
+            for candidate in openalex_candidates:
+                # Affiliations
+                cand_affils = self.get_candidate_affiliations(
+                    candidate, in_target_years=True, must_be_dutch=True
                 )
-                contributor_has_shared_affiliations = True
+                shared_affils = phd_affiliations_at_graduation.intersection(cand_affils)
+                # Publications
+                works = get_authored_works(
+                    author_id=candidate['id'], author_name=candidate['display_name']
+                )
+                contrib_dois = set(works['doi'].tolist())
+                shared_pubs = set(phd_dois).intersection(contrib_dois)
 
+                name_matches_open_alex.append(candidate['display_name'])
+                
+                # Check match criteria. We require at least one shared publication
+                if len(shared_pubs) >= self.n_shared_pubs_min:
+                    matching_candidates.append(candidate)
+                    shared_pub_union.update(shared_pubs)
+                    all_shared_affils.update(shared_affils)
+                    if self.institution in shared_affils:
+                        same_grad_inst_flag = True
+                    if candidate['id'] in self.__class__.supervisors_in_pilot_dataset.values():
+                        pilot_flag = True
+                    if self.thesis_id in works['work_id'].tolist():
+                        thesis_coauthor_flag = True
 
-            if not contributor_has_shared_affiliations:
-                self.logger.debug(f"No shared affiliations found for contributor: {contributor_name}. Moving to next contributor.")
+            # Fill aggregated values
+            supervisor_data['name_matches_open_alex'] = name_matches_open_alex
+            supervisor_data['supervisor'] = matching_candidates
+            supervisor_data['n_shared_inst_grad'] = len(all_shared_affils)
+            supervisor_data['same_grad_inst'] = same_grad_inst_flag
+            supervisor_data['is_sup_in_pilot_dataset'] = pilot_flag
+            supervisor_data['n_shared_pubs'] = len(shared_pub_union)
+            supervisor_data['shared_pubs'] = list(shared_pub_union)
+            supervisor_data['is_thesis_coauthor'] = thesis_coauthor_flag
 
-        # Log the total number of contributors with matches
+            # Confirmation and assign match method to confirmed supervisors
+            if matching_candidates:
+                supervisor_data['supervisor_confirmed'] = True
+                supervisor_data['sup_match_by'] = f"Name match and >={self.n_shared_pubs_min} shared publications."
+                self.logger.info(
+                    f"Contributor '{contributor_name}' matched by {supervisor_data['sup_match_by']}"
+                )
+            else:
+                self.logger.debug(
+                    f"No matching criteria met for '{contributor_name}'. Placeholder data recorded."
+                )
+
+            self.potential_supervisors.append(supervisor_data)
+
         self.logger.info(
-            f"Total contributors with shared affiliations: {len(self.potential_supervisors)} out of {len(self.contributors)}"
+            f"Processed {len(self.contributors)} contributors; "
+            f"{sum(1 for s in self.potential_supervisors if s['supervisor_confirmed'])} confirmed supervisors."
         )
-
-        if not self.potential_supervisors:
-            self.logger.warning("No potential supervisors found.")
         return self.potential_supervisors
-
 
     def get_results(self):
         """
@@ -517,6 +509,7 @@ class AuthorRelations:
             'phd_match_score',
             'phd_match_by',
             'contributor_name_narcis',
+            'name_matches_open_alex',
             'contributor_confirmed',
             'contributor_name', 
             'contributor_id',
@@ -555,6 +548,7 @@ class AuthorRelations:
             supervisor = supervisor_data['supervisor']
             # with the implicit merging of all potential contributors, the contributor names and ids become lists
             contributor_name_narcis = supervisor_data["contributor_name_narcis"]
+            name_matches_open_alex = supervisor_data["name_matches_open_alex"]
             contributor_confirmed = supervisor_data["supervisor_confirmed"]
             contributor_name = [supervisor_nested['display_name'] for supervisor_nested in supervisor]
             contributor_id = [supervisor_nested['id'] for supervisor_nested in supervisor]
@@ -581,7 +575,8 @@ class AuthorRelations:
                 'affiliation_match': self.affiliation_match,
                 'phd_match_score': self.phd_match_score,
                 'phd_match_by': self.phd_match_by,
-                'contributor_name_narcis': self.contributor_name_narcis,
+                'contributor_name_narcis': contributor_name_narcis,
+                'name_matches_open_alex': name_matches_open_alex,
                 'contributor_confirmed': contributor_confirmed,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
