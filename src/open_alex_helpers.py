@@ -382,8 +382,8 @@ class AuthorRelations:
                 self.logger.debug(f"No candidates found for contributor: {contributor_name}. Moving to next contributor.")
                 continue
             
-            # Prepare contributor_found_in_openalex flag
-            contributor_found_in_openalex = False
+            # Prepare contributor_has_shared_affiliations flag
+            contributor_has_shared_affiliations = False
             
             # Use a list comprehension to collect all candidates with a shared affiliation
             matching_candidates = [
@@ -436,8 +436,9 @@ class AuthorRelations:
                     
                     # Query publications for candidate contributor
                     df_works_contrib = get_authored_works(author_id=candidate["id"], author_name=candidate["display_name"])
-
+                    
                     contrib_dois = df_works_contrib["doi"].tolist()
+                    
                     # Merge shared publication DOIs across candidates and add to set
                     # of earlier found shared publications
                     shared_publications_union.update(set(phd_dois).intersection(set(contrib_dois)))
@@ -471,10 +472,10 @@ class AuthorRelations:
                 self.logger.info(
                     f"Merge of {len(matching_candidates)} potential contributors yielded {n_shared_inst_grad} shared institution(s) at graduation and {len(shared_dois)} shared publication(s)."
                 )
-                contributor_found_in_openalex = True
+                contributor_has_shared_affiliations = True
 
 
-            if not contributor_found_in_openalex:
+            if not contributor_has_shared_affiliations:
                 self.logger.debug(f"No shared affiliations found for contributor: {contributor_name}. Moving to next contributor.")
 
         # Log the total number of contributors with matches
@@ -515,6 +516,7 @@ class AuthorRelations:
             'affiliation_match',
             'phd_match_score',
             'phd_match_by',
+            'contributor_name_narcis',
             'contributor_confirmed',
             'contributor_name', 
             'contributor_id',
@@ -552,6 +554,7 @@ class AuthorRelations:
         for supervisor_data in self.potential_supervisors:
             supervisor = supervisor_data['supervisor']
             # with the implicit merging of all potential contributors, the contributor names and ids become lists
+            contributor_name_narcis = supervisor_data["contributor_name_narcis"]
             contributor_confirmed = supervisor_data["supervisor_confirmed"]
             contributor_name = [supervisor_nested['display_name'] for supervisor_nested in supervisor]
             contributor_id = [supervisor_nested['id'] for supervisor_nested in supervisor]
@@ -578,6 +581,7 @@ class AuthorRelations:
                 'affiliation_match': self.affiliation_match,
                 'phd_match_score': self.phd_match_score,
                 'phd_match_by': self.phd_match_by,
+                'contributor_name_narcis': self.contributor_name_narcis,
                 'contributor_confirmed': contributor_confirmed,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
