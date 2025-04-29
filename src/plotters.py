@@ -120,7 +120,7 @@ class PhDMatchPlotter:
         
         self.df_unique = (
             self.df.loc[:, self._REQUIRED_COLS] # select the required columns only
-                .drop_duplicates(subset="phd_name") # unique rows per PhD
+                .drop_duplicates(subset=["phd_name", "phd_id"]) # unique rows per PhD. With this subset, we can distinguish between PhDs with the same name, but different ids (if we found them) 
                 .copy()
         )
         self.df_unique["affiliation_match"] = (
