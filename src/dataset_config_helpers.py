@@ -41,7 +41,7 @@ def load_dataset(dataset_path: str, config: Optional[dict] = None) -> pd.DataFra
     df = pd.read_csv(dataset_path)
     print(f"Dataset loaded. Total rows: {len(df)}")
 
-    domain = config.get('domain', 'all')
+    domain = config.get('domain', None)
     chunk = config.get('chunk', None)
     nrows = config.get('nrows', None)
     print(f"Using domain={domain}, chunk={chunk}, nrows={nrows}")
@@ -63,7 +63,6 @@ def load_dataset(dataset_path: str, config: Optional[dict] = None) -> pd.DataFra
         print(f"Selected chunk index: {idx}. Rows in this chunk: {len(df)}")
     elif nrows is not None: # we have a row number
         print(f"Randomly sampling up to {nrows} rows...")
-        # Note: 'seed' has been replaced by 'random_state'
         df = df.sample(n=min([nrows, len(df)]), random_state=42)
         print(f"Sampled rows: {len(df)}")
     else:
