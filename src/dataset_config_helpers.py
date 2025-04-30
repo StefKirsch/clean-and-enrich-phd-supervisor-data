@@ -1,5 +1,6 @@
 import yaml
 import pandas as pd
+from typing import Optional
 
 def read_config(config_path: str) -> dict:
     """
@@ -16,7 +17,7 @@ def read_config(config_path: str) -> dict:
         config = yaml.safe_load(f)
     return config
 
-def load_dataset(config: dict, dataset_path: str) -> pd.DataFrame:
+def load_dataset(dataset_path: str, config: Optional[dict] = None) -> pd.DataFrame:
     """
     Loads and subsets a dataset according to the provided configuration.
 
