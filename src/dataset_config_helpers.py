@@ -32,6 +32,11 @@ def load_dataset(dataset_path: str, config: Optional[dict] = None) -> pd.DataFra
     Returns:
         pd.DataFrame: Subset of data according to config settings.
     """
+    
+    # If no config is provided, use an empty dict, which will resort to the full dataset
+    if config is None:
+        config = {}
+    
     # Read full dataset
     df = pd.read_csv(dataset_path)
     print(f"Dataset loaded. Total rows: {len(df)}")
