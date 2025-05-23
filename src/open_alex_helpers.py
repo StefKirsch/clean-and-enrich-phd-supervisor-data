@@ -334,9 +334,9 @@ class AuthorRelations:
         """
         Based on relationships between `self.phd_candidate` and contributors collect metadata that indicates supervision. 
         
-        We look up contributors in OpenAlex. We confirm that we matched the contributor name with an author in OpenAlex
-        by requiring *either* shared institution in the time window (target years) of the thesis publication, *or*
-        at least *one* shared publication DOI.  
+        We look up contributors in OpenAlex by name search. Then we check if ANY of the search matches fulfill
+        the criteria we define to be a potential supervisor. This implicitly merges all the search results for each contributor name.
+        For mote info, see the comment below.
         
         Every contributor yields a results dictionary, even if not confirmed. Unmatched contributors get placeholder values.
         The following metadata will be collected per contributor:
@@ -409,13 +409,13 @@ class AuthorRelations:
 
             # Identify candidates with either shared institution or shared publications
             name_matches_open_alex = [] # Name match with OpenAlex
-            matching_candidates = [] # Confirmed candidates
             shared_pub_union = set()
             all_shared_affils = set()
+            coauthorship_flag = False
             same_grad_inst_flag = False
             pilot_flag = False
             thesis_coauthor_flag = False
- 
+
             # Open Alex has a lot partial duplicates of authors, especially for ones that are
             # later in their career.
             # We thus decided to implicitly merge all of the matches, i.e. candidates that we find with
@@ -424,54 +424,78 @@ class AuthorRelations:
             # matched potential contributors and that we collect the shared publication between the
             # PhD candidate and ALL of the matched potential contributors. 
             for candidate in openalex_candidates:
+
+                name_matches_open_alex.append(candidate['display_name'])
+
                 # Affiliations
                 cand_affils = self.get_candidate_affiliations(
                     candidate, in_target_years=True, must_be_dutch=True
                 )
                 shared_affils = phd_affiliations_at_graduation.intersection(cand_affils)
+
+                all_shared_affils.update(shared_affils)
+
                 # Publications
                 works = get_authored_works(
                     author_id=candidate['id'], author_name=candidate['display_name']
                 )
                 contrib_dois = set(works['doi'].tolist())
                 shared_pubs = set(phd_dois).intersection(contrib_dois)
+                shared_pub_union.update(shared_pubs)
 
-                name_matches_open_alex.append(candidate['display_name'])
-                
-                # Check match criteria. We require at least one shared publication
-                if len(shared_pubs) >= self.n_shared_pubs_min:
-                    matching_candidates.append(candidate)
-                    shared_pub_union.update(shared_pubs)
-                    all_shared_affils.update(shared_affils)
-                    if self.institution in shared_affils:
-                        same_grad_inst_flag = True
-                    if candidate['id'] in self.__class__.supervisors_in_pilot_dataset.values():
-                        pilot_flag = True
-                    if self.thesis_id in works['work_id'].tolist():
-                        thesis_coauthor_flag = True
+                if len(shared_pub_union) >= self.n_shared_pubs_min:
+                    coauthorship_flag = True
+
+                if self.thesis_id in works['work_id'].tolist():
+                    thesis_coauthor_flag = True
+
+                if self.institution in shared_affils:
+                    same_grad_inst_flag = True
+
+                if candidate['id'] in self.__class__.supervisors_in_pilot_dataset.values():
+                    pilot_flag = True
+                    
+                self.logger.debug(
+                    f"Processing name match {candidate['display_name']} for NARCIS name {contributor_name}: "
+                    f"{len(shared_pubs)} shared publications, "
+                    f"{'thesis coauthor' if thesis_coauthor_flag else 'not thesis coauthor'}, "
+                    f"{'same graduation institution' if same_grad_inst_flag else 'not same graduation institution'}, and "
+                    f"{'in pilot dataset' if pilot_flag else 'not in pilot dataset'}"
+                )
+
+
+            # Check match criteria. We require at least one shared publication, but let's make it easy to adjust what we check for
+            criteria_met = coauthorship_flag
 
             # Fill aggregated values
-            supervisor_data['name_matches_open_alex'] = name_matches_open_alex
-            supervisor_data['supervisor'] = matching_candidates
-            supervisor_data['n_shared_inst_grad'] = len(all_shared_affils)
-            supervisor_data['same_grad_inst'] = same_grad_inst_flag
-            supervisor_data['is_sup_in_pilot_dataset'] = pilot_flag
-            supervisor_data['n_shared_pubs'] = len(shared_pub_union)
-            supervisor_data['shared_pubs'] = list(shared_pub_union)
-            supervisor_data['is_thesis_coauthor'] = thesis_coauthor_flag
-
-            # Confirmation and assign match method to confirmed supervisors
-            if matching_candidates:
-                supervisor_data['supervisor_confirmed'] = True
-                supervisor_data['sup_match_by'] = f"Name match and >={self.n_shared_pubs_min} shared publications."
+            # If we have a match, we fill the values collected above, otherwise we keep the default (i.e. empty) values.
+            if criteria_met:
+                supervisor_data.update({
+                    "name_matches_open_alex":     name_matches_open_alex,
+                    "supervisor":                 openalex_candidates,
+                    "n_shared_inst_grad":         len(all_shared_affils),
+                    "same_grad_inst":             same_grad_inst_flag,
+                    "is_sup_in_pilot_dataset":    pilot_flag,
+                    "n_shared_pubs":              len(shared_pub_union),
+                    "shared_pubs":                list(shared_pub_union),
+                    "is_thesis_coauthor":         thesis_coauthor_flag,
+                    "supervisor_confirmed":       True,
+                    "sup_match_by": (
+                        f"Name match and ≥{self.n_shared_pubs_min} shared publications."
+                    ),
+                })
+                
                 self.logger.info(
                     f"Contributor '{contributor_name}' matched by {supervisor_data['sup_match_by']}"
                 )
+                
             else:
                 self.logger.debug(
                     f"No matching criteria met for '{contributor_name}'. Placeholder data recorded."
                 )
-
+                
+            # Append the data before moving to the next supervisor listed in NARCIS
+            # If we have no match, we write the empty defaults here.
             self.potential_supervisors.append(supervisor_data)
 
         self.logger.info(
