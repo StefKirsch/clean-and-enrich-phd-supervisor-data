@@ -378,12 +378,18 @@ class AuthorRelations:
             contributor_rank = idx + 1
             self.logger.debug(f"Processing contributor #{contributor_rank}: {contributor_name}")
 
-            # Prepare default placeholder data
+            # Search for contributors in OpenAlex
+            openalex_candidates = Authors().search(contributor_name).get()
+            self.logger.debug(
+                f"Found {len(openalex_candidates)} OpenAlex candidates for '{contributor_name}'."
+            )
+            
+            # Prepare placeholder data
             supervisor_data = {
                 'contributor_name_narcis': contributor_name,
                 'name_matches_open_alex': [],
                 'contributor_rank': contributor_rank,
-                'supervisor': [],
+                'supervisor': openalex_candidates,
                 'supervisor_confirmed': False,
                 'same_grad_inst': False,
                 'n_shared_inst_grad': 0,
@@ -393,12 +399,6 @@ class AuthorRelations:
                 'shared_pubs': [],
                 'is_thesis_coauthor': False
             }
-
-            # Search for contributors in OpenAlex
-            openalex_candidates = Authors().search(contributor_name).get()
-            self.logger.debug(
-                f"Found {len(openalex_candidates)} OpenAlex candidates for '{contributor_name}'."
-            )
 
             if not openalex_candidates:
                 self.logger.debug(
