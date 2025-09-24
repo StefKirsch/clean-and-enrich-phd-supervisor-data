@@ -164,9 +164,9 @@ class PhDMatchPlotter:
 
     @staticmethod
     def _determine_category_row(row: pd.Series) -> str:
-        if pd.isna(row["phd_match_by"]):
+        if pd.isna(row["phd_id"]) :
             return "Not found in Open Alex"
-        if not row["phd_match_score"]:
+        if not row["phd_match_by"]:
             return "Found, but no other match"
         if not row["exact_match"] and not row["affiliation_match"] and not row["near_exact_match"]:
             return "Fuzzy title match only"

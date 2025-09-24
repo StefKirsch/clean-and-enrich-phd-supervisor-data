@@ -242,8 +242,12 @@ class AuthorRelations:
         self.n_name_search_matches = len(candidates)
         # Assign values to the object for the best match for the candidate
         self.phd_candidate = best_candidate_info['candidate']
+        
+        # Decide whether we think we confirmed this candidate or not
+        criteria_met = best_candidate_info['match_score'] > 0
+        
         # For reference, indicate how we arrived at this candidate
-        self.phd_match_by = "ranking"
+        self.phd_match_by = "ranking" if criteria_met else None
         self.title_open_alex = best_candidate_info['titles_open_alex']
         self.title_similarities = best_candidate_info['title_similarities']
         self.max_title_similarity = best_candidate_info['max_similarity']
@@ -369,7 +373,9 @@ class AuthorRelations:
         'shared_pubs': List of shared publication DOIs -> list
         'is_thesis_coauthor': True if any candidate coauthored the thesis -> bool
         """
-        if not self.phd_candidate:
+        
+        # search for contributor if we managed to find and confirm the PhD
+        if not self.phd_candidate or not self.phd_match_by:
             self.logger.warning("PhD candidate not confirmed. Cannot find potential supervisors.")
             return []
 
