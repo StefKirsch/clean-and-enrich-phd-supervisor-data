@@ -67,3 +67,30 @@ def ensure_and_load_spacy_model(model_name):
         print(f"{model_name} has been successfully downloaded.")
     print(f"{model_name} has been loaded!")
     return nlp
+
+
+def merge_near_duplicates_on_col(df: pd.DataFrame, merge_col: str = "institution") -> pd.DataFrame:
+    """
+    Handle duplicate entries that only differ in one column by merging them together, producing a
+    set of the unique values in that column per duplicate group. 
+    
+    # NOTE
+    # This is currently unused, as it can be very difficult identify functionally duplicate columns at this stage of the pipeline.
+    # c.f. #46
+    """
+    other_cols = [c for c in df.columns if c != merge_col]
+
+    # Combine al unique values into a tuple of values, preserving all version of merge_col we came across in the duplicates 
+    def merge_vals(s: pd.Series):
+        vals = pd.unique(s.dropna())
+        return vals[0] if len(vals) == 1 else tuple(vals)
+    
+    merged = (
+        df
+        .groupby(other_cols, as_index=False, dropna=False, sort=False)[merge_col]
+        .agg(merge_vals)
+    )
+    
+    print(f"Merged {len(df)-len(merged)} duplicates that only differ in the '{merge_col}' column.")
+    
+    return merged
