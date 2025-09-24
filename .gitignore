@@ -1,21 +1,22 @@
+# Data
 *.csv
 *.pyc
 .ipynb_checkpoints
 *.pdf
+# for Open Alex API cache
+*.sqlite  
 
+# logs
+*.log
+
+# config and settings
+dataset_config.yaml
+contact_email.txt
 scoupus_api_key.csv
 
-__pychache__
-experimentation
-
-remove_entries_with_comma.py
-contact_email.txt
-lookup_log.txt
-*.log
-dataset_config.yaml
-
-# Open Alex API cache
-openalex_cache.sqlite
-
-# VS Code files
+# VS Code & dev files
 settings.json
+__pychache__
+
+# folder with some tests to keep locally
+experimentation
