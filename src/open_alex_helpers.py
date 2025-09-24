@@ -469,7 +469,11 @@ class AuthorRelations:
 
             # Check match criteria
             criteria_met = coauthorship_flag # We require at least one shared publication.
-
+            sup_match_by = f"Name match and {self.n_shared_pubs_min}+ shared publications."
+            
+            # criteria_met = same_grad_inst_flag # We require at least one shared affiliation in the target years around graduation
+            # sup_match_by = "Shared affiliation at graduation."
+            
             # Fill aggregated values
             supervisor_data.update({
                 "name_matches_open_alex":     name_matches_open_alex,
@@ -482,7 +486,7 @@ class AuthorRelations:
                 "is_thesis_coauthor":         thesis_coauthor_flag,
                 "supervisor_confirmed":       criteria_met,
                 "sup_match_by": (
-                    f"Name match and {self.n_shared_pubs_min}+ shared publications." if criteria_met else ''
+                    sup_match_by if criteria_met else ''
                 ),
             })
             
