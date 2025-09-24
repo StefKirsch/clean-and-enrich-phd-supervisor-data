@@ -6,7 +6,7 @@ from os import path, makedirs
 from sentence_transformers import util
 
 from src.io_helpers import fetch_supervisors_from_pilot_dataset, remove_illegal_title_characters, ordinal
-from src.clean_names_helpers import format_name_to_lastname_firstname
+from src.clean_names_helpers import format_name_to_lastname_firstname, name_sanity_check
 
 class AuthorRelations:
     # Class attribute shared by all instances
@@ -130,6 +130,10 @@ class AuthorRelations:
         # Collect raw and processed info for all candidates
         candidates_info = []
         for candidate in candidates:
+                        
+            # Some basic sanity checking if the two names could realistically refer to the same person
+            if not name_sanity_check(self.phd_name, candidate['display_name']):
+                continue
             
             self.logger.debug(f"Evaluating candidate: {candidate['display_name']} (ID: {candidate['id']})")
             affiliation_match = self.check_affiliation(candidate)
@@ -170,6 +174,7 @@ class AuthorRelations:
             close_matches = [val for val in title_similarities_in_target_years if val >= self.similarity_cutoff]
             n_close_matches = len(close_matches)
 
+
             candidates_info.append({
                 'candidate': candidate,
                 'candidate_name': candidate['display_name'],
@@ -187,6 +192,11 @@ class AuthorRelations:
             
             # Append the works of the open alex author to the dataframe of all potential works of the phd candidate 
             df_works = pd.concat([df_works, df_works_candidate], ignore_index=True)
+        
+        # No candidates that passed the name sanity check
+        if not candidates_info:
+            self.logger.warning("No candidates found that passed the name sanity check with the given PhD name.")
+            return None
         
         # Convert to a DataFrame for ranking
         candidates_info_with_scores = pd.DataFrame(candidates_info)
@@ -433,7 +443,11 @@ class AuthorRelations:
             # matched potential contributors and that we collect the shared publication between the
             # PhD candidate and ALL of the matched potential contributors. 
             for candidate in openalex_candidates:
-
+                
+                # Some basic sanity checking if the two names could realistically refer to the same person
+                if not name_sanity_check(contributor_name, candidate['display_name']):
+                    continue
+                
                 name_matches_open_alex.append(candidate['display_name'])
 
                 # Affiliations
