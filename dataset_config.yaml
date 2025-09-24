@@ -1,0 +1,16 @@
+# Which subset of the dataset to use. Possible values: "biomedical_recent" or empty for all.
+domain:
+
+# Chunk number. 
+# If empty, take a random sample.
+# If number the nth chunk of nrows will be taken.
+# First index is 0
+chunk:
+
+# Number of rows to read from the dataset. 
+# If empty, take the full dataset
+nrows:
+
+# Choose rank after which we cut of contributors.
+# 1 means we only keep the first, 2 the first two etc.
+min_rank_contrib:
