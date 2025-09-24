@@ -205,8 +205,13 @@ class AuthorRelations:
             )
         )
 
-        # Sort by match_score descending
-        candidates_info_with_scores = candidates_info_with_scores.sort_values('match_score', ascending=False, ignore_index=True)
+        # Sort by match_score and max_similarity (descending)
+        candidates_info_with_scores = candidates_info_with_scores.sort_values(
+            by=['match_score', 'max_similarity'],
+            ascending=[False, False],
+            ignore_index=True
+        )
+
 
         # If logger is in debug mode, print the ranked table
         if self.logger.isEnabledFor(logging.DEBUG):
