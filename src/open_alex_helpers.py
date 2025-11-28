@@ -494,9 +494,12 @@ class AuthorRelations:
 
             # Check match criteria
             criteria_met = coauthorship_flag # We require at least one shared publication.
-            sup_match_by = f"Name match and {self.n_shared_pubs_min}+ shared publications."
+            sup_match_by = f"Name match and ≥ {self.n_shared_pubs_min} shared publication(s)."
             
-            # criteria_met = same_grad_inst_flag # We require at least one shared affiliation in the target years around graduation
+            # criteria_met = same_grad_inst_flag # We require that both are affiliated with the institution in NARCIS at graduation
+            # sup_match_by = "Affiliated with NARCIS institution at graduation."
+            
+            # criteria_met = bool(len(all_shared_affils)) # We require at least one shared affiliation in the target years around graduation
             # sup_match_by = "Shared affiliation at graduation."
             
             # Fill aggregated values
