@@ -301,6 +301,8 @@ class ContributorMatchPlotter:
             fontsize=10,
         )
         fig.suptitle("Contributor Matching Confirmation by Type", fontsize=12)
+        fig.subplots_adjust(top=0.85, bottom=0.28, right=0.97)
+
 
         ax.legend(
             handles=[
