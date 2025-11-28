@@ -224,14 +224,15 @@ class ContributorMatchPlotter:
     )
 
     _BAR_CATEGORIES: list[str] = [
-        "Not found",
+        "PhD not found in Open Alex",
+        "Contributor not found in Open Alex",
         "No shared publications or affiliation at graduation",
         "Shared affiliation at graduation only",
         "Shared publications only",
         "Shared publications and affiliation at graduation",
         "Other",
     ]
-    _FIRST_CONFIRMED = 3  # bars 0-2  = not confirmed, 3-5 = confirmed
+    _FIRST_CONFIRMED = 4  # bars 0-3  = not confirmed, 4-5 = confirmed
 
     # -----------------------------------------------------------------
     def __init__(
@@ -333,8 +334,10 @@ class ContributorMatchPlotter:
         return False
 
     def _determine_category_row(self, row: pd.Series) -> str:
-        if self._missing_or_empty(row["contributor_id"]):
-            return "Not found"
+        if self._missing_or_empty(row["phd_match_by"]):
+            return "PhD not found in Open Alex"
+        if not row["name_matches_open_alex"]:
+            return "Contributor not found in Open Alex"
         if not row["n_shared_pubs"] and not row["same_grad_inst"]:
             return "No shared publications or affiliation at graduation"
         if not row["n_shared_pubs"] and row["same_grad_inst"]:
@@ -361,10 +364,9 @@ class ContributorMatchPlotter:
         self.df["match_category"] = self.df.apply(self._determine_category_row, axis=1)
 
         # -----------------------------------------------------------------
-        # 2) contributor-level frame (ignore rows without phd_id)
+        # 2) contributor-level frame
         # -----------------------------------------------------------------
-        self.contrib_df = self.df.loc[self.df["phd_id"].notna(),
-                                      ["phd_id", "match_category", "contributor_name"]]
+        self.contrib_df = self.df[["phd_id", "match_category", "contributor_name"]]
 
         # -----------------------------------------------------------------
         # 3) flags per PhD: any confirmed contributor?

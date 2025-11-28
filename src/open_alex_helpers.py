@@ -350,7 +350,23 @@ class AuthorRelations:
             
             return set()
             
-
+    def _init_supervisor_record(self, contributor_name, rank, openalex_candidates=None):
+        return {
+            'contributor_name_narcis': contributor_name,
+            'name_matches_open_alex': [],
+            'contributor_rank': rank,
+            'supervisor': openalex_candidates or [],
+            'supervisor_confirmed': False,
+            'same_grad_inst': False,
+            'n_shared_inst_grad': 0,
+            'is_sup_in_pilot_dataset': False,
+            'sup_match_by': '',
+            'n_shared_pubs': 0,
+            'shared_pubs': [],
+            'is_thesis_coauthor': False,
+        }
+        
+    
     def collect_supervision_metadata(self):
         """
         Based on relationships between `self.phd_candidate` and contributors collect metadata that indicates supervision. 
@@ -374,23 +390,47 @@ class AuthorRelations:
         'is_thesis_coauthor': True if any candidate coauthored the thesis -> bool
         """
         
-        # search for contributor if we managed to find and confirm the PhD
+        self.potential_supervisors = []
+
+        # Case 1: PhD candidate not confirmed
         if not self.phd_candidate or not self.phd_match_by:
-            self.logger.warning("PhD candidate not confirmed. Cannot find potential supervisors.")
-            return []
+            self.logger.warning(
+                "PhD candidate not confirmed. Cannot find potential supervisors; "
+                "recording contributors only with NARCIS data."
+            )
+
+            for idx, contributor_name in enumerate(self.contributors):
+                contributor_rank = idx + 1
+                self.potential_supervisors.append(
+                    self._init_supervisor_record(contributor_name, contributor_rank)
+                )
+
+            return self.potential_supervisors
 
         # Get PhD candidate's affiliations at graduation
         phd_affiliations_at_graduation = self.get_candidate_affiliations(
             self.phd_candidate, in_target_years=True
         )
+        
+        # Case 2: no affiliations in target years
         if not phd_affiliations_at_graduation:
             self.logger.warning(
-                "PhD candidate has no affiliations in target years. Cannot find potential supervisors."
+                "PhD candidate has no affiliations in target years. Cannot find potential supervisors; "
+                "recording contributors only with NARCIS data."
             )
-            return []
 
+            for idx, contributor_name in enumerate(self.contributors):
+                contributor_rank = idx + 1
+                self.potential_supervisors.append(
+                    self._init_supervisor_record(contributor_name, contributor_rank)
+                )
+
+            return self.potential_supervisors
+
+        # Case 3: PhD candidate confirmed with affiliation in target years
         self.logger.debug(
-            f"Target Institutions: {phd_affiliations_at_graduation}, Target Years: {self.affiliation_target_years}"
+            f"Target Institutions: {phd_affiliations_at_graduation}, "
+            f"Target Years: {self.affiliation_target_years}"
         )
         self.logger.info("Searching for potential supervisors among contributors.")
 
@@ -408,20 +448,11 @@ class AuthorRelations:
             )
             
             # Allocate dict for aggregated supervisor data
-            supervisor_data = {
-                'contributor_name_narcis': contributor_name,
-                'name_matches_open_alex': [],
-                'contributor_rank': contributor_rank,
-                'supervisor': openalex_candidates,
-                'supervisor_confirmed': False,
-                'same_grad_inst': False,
-                'n_shared_inst_grad': 0,
-                'is_sup_in_pilot_dataset': False,
-                'sup_match_by': '',
-                'n_shared_pubs': 0,
-                'shared_pubs': [],
-                'is_thesis_coauthor': False
-            }
+            supervisor_data = self._init_supervisor_record(
+                contributor_name=contributor_name,
+                rank=contributor_rank,
+                openalex_candidates=openalex_candidates,
+            )
 
             if not openalex_candidates:
                 self.logger.debug(
@@ -580,22 +611,10 @@ class AuthorRelations:
             'is_thesis_coauthor'
         ]
 
-        
-        if not self.phd_candidate:
-            self.logger.warning("PhD candidate was not found in Open Alex so we can't look for contributors either")
-            # Create a single row with the data we have and the others as None
-            result_row = {col: None for col in columns}
-            result_row['phd_name'] = self.phd_name
-            result_row['n_name_search_matches'] = 0
-            result_row['year'] = self.year
-            result_row['title'] = self.title
-            return pd.DataFrame([result_row], columns=columns)
-
-        # If we reach this, we have a confirmed the PhD candidate
-        phd_id = self.phd_candidate['id']
-        phd_name = self.phd_candidate['display_name']
-        title_open_alex = self.title_open_alex if self.title_open_alex else None # convert empty list to None
-        title_similarities = self.title_similarities if self.title_similarities else None # convert empty list to None
+        phd_id = self.phd_candidate['id'] if self.phd_candidate else None
+        phd_name = self.phd_candidate['display_name'] if self.phd_candidate else self.phd_name
+        title_open_alex = self.title_open_alex if self.title_open_alex else self.title # convert empty list to None
+        title_similarities = self.title_similarities or None # convert empty list to None
         max_title_similarity = self.max_title_similarity if self.max_title_similarity else None
         
         # Create a list of dictionaries for each supervisor
