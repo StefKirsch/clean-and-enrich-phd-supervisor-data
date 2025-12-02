@@ -15,7 +15,8 @@ class AuthorRelations:
     # Values: supervisor OpenAlex ID
     supervisors_in_pilot_dataset = dict()
     
-    def __init__(self, phd_name, title, year, institution, contributors, model, years_tolerance=0, verbosity='INFO'):
+    def __init__(self, integer_id, phd_name, title, year, institution, contributors, model, years_tolerance=0, verbosity='INFO'):
+        self.integer_id = integer_id
         self.phd_name = phd_name
         self.n_name_search_matches = None # Number of matches for the PhD candidate's name between NARCIS and OpenAlex
         self.title = title # title of the thesis as it appears in Narcis
@@ -583,6 +584,7 @@ class AuthorRelations:
         
         # The columns our DataFrame should have
         columns = [
+            'integer_id',
             'phd_name', 
             'phd_id', 
             'phd_orcid',
@@ -614,6 +616,7 @@ class AuthorRelations:
             'is_thesis_coauthor'
         ]
 
+        integer_id = self.integer_id
         phd_id = self.phd_candidate['id'] if self.phd_candidate else None
         phd_orcid = self.phd_candidate['orcid'] if self.phd_candidate else None
         phd_name = self.phd_candidate['display_name'] if self.phd_candidate else self.phd_name
@@ -642,6 +645,7 @@ class AuthorRelations:
             is_thesis_coauthor = supervisor_data['is_thesis_coauthor']
 
             result_row = {
+                'integer_id': integer_id,
                 'phd_name': phd_name,
                 'phd_id': phd_id,
                 'phd_orcid': phd_orcid,
@@ -678,6 +682,7 @@ class AuthorRelations:
             self.logger.warning("PhD candidate confirmed, but no supervisors found.")
             # Create a single row with the data we have and the others as None
             result_row = {col: None for col in columns}
+            result_row['integer_id'] = integer_id
             result_row['phd_name'] = phd_name
             result_row['phd_id'] = phd_id
             result_row['phd_orcid'] = phd_orcid
@@ -825,6 +830,7 @@ def find_phd_and_supervisors_in_row(row, model):
         pd.DataFrame: A DataFrame with columns as specified.
     """
     # Extract necessary fields
+    integer_id = row['integer_id']
     phd_name = row['phd_name']
     title = row['title']
     year = int(row['year'])
@@ -833,6 +839,7 @@ def find_phd_and_supervisors_in_row(row, model):
     
     # Create an instance of AuthorRelations
     author_relations = AuthorRelations(
+        integer_id=integer_id,
         phd_name=phd_name,
         title=title,
         year=year,
