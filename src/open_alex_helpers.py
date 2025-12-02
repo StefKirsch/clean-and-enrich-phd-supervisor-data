@@ -179,6 +179,7 @@ class AuthorRelations:
                 'candidate': candidate,
                 'candidate_name': candidate['display_name'],
                 'candidate_id': candidate['id'],
+                'candidate_orcid': candidate['orcid'],
                 'ids_open_alex': work_ids_open_alex_in_target_years,
                 'titles_open_alex': titles_open_alex_in_target_years,
                 'title_similarities': title_similarities_in_target_years,
@@ -227,7 +228,7 @@ class AuthorRelations:
         if self.logger.isEnabledFor(logging.DEBUG):
             # Select the columns most relevant for debugging the ranking
             columns_to_show = [
-                'candidate_name', 'candidate_id', 'match_score',
+                'candidate_name', 'candidate_id', 'candidate_orcid', 'match_score',
                 'max_similarity', 'n_close_matches', 'exact_match', 'near_exact_match', 'affiliation_match'
             ]
             self.logger.debug(f"Ranked candidates:\n{candidates_info_with_scores[columns_to_show].to_string(index=False)}")
@@ -576,7 +577,7 @@ class AuthorRelations:
         with only 'phd_name' filled and all other columns as None.
 
         If a PhD candidate was found but no supervisors were confirmed,
-        also return a single-row DataFrame with 'phd_name', 'phd_id', 'phd_match_by' filled
+        also return a single-row DataFrame with 'phd_name', 'phd_id', 'phd_orcid', 'phd_match_by' filled
         and all supervisor-related columns as NaN.
         """
         
@@ -584,6 +585,7 @@ class AuthorRelations:
         columns = [
             'phd_name', 
             'phd_id', 
+            'phd_orcid',
             'n_name_search_matches',
             'year', 
             'title', 
@@ -601,6 +603,7 @@ class AuthorRelations:
             'contributor_confirmed',
             'contributor_name', 
             'contributor_id',
+            'contributor_orcid',
             'sup_match_by',
             'contributor_rank', 
             'same_grad_inst', 
@@ -612,6 +615,7 @@ class AuthorRelations:
         ]
 
         phd_id = self.phd_candidate['id'] if self.phd_candidate else None
+        phd_orcid = self.phd_candidate['orcid'] if self.phd_candidate else None
         phd_name = self.phd_candidate['display_name'] if self.phd_candidate else self.phd_name
         title_open_alex = self.title_open_alex if self.title_open_alex else self.title # convert empty list to None
         title_similarities = self.title_similarities or None # convert empty list to None
@@ -628,6 +632,7 @@ class AuthorRelations:
             contributor_confirmed = supervisor_data["supervisor_confirmed"]
             contributor_name = [supervisor_nested['display_name'] for supervisor_nested in supervisor]
             contributor_id = [supervisor_nested['id'] for supervisor_nested in supervisor]
+            contributor_orcid = [supervisor_nested['orcid'] for supervisor_nested in supervisor]
             sup_match_by = supervisor_data['sup_match_by']
             contributor_rank = supervisor_data['contributor_rank']
             same_grad_inst = supervisor_data['same_grad_inst']
@@ -639,6 +644,7 @@ class AuthorRelations:
             result_row = {
                 'phd_name': phd_name,
                 'phd_id': phd_id,
+                'phd_orcid': phd_orcid,
                 'n_name_search_matches': self.n_name_search_matches,
                 'year': self.year,
                 'title': self.title,
@@ -656,6 +662,7 @@ class AuthorRelations:
                 'contributor_confirmed': contributor_confirmed,
                 'contributor_name': contributor_name,
                 'contributor_id': contributor_id,
+                'contributor_orcid': contributor_orcid,
                 'sup_match_by': sup_match_by,
                 'contributor_rank': contributor_rank,
                 'same_grad_inst': same_grad_inst,
@@ -673,6 +680,7 @@ class AuthorRelations:
             result_row = {col: None for col in columns}
             result_row['phd_name'] = phd_name
             result_row['phd_id'] = phd_id
+            result_row['phd_orcid'] = phd_orcid
             result_row['n_name_search_matches'] = self.n_name_search_matches
             result_row['year'] = self.year
             result_row['title'] = self.title
