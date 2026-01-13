@@ -49,7 +49,7 @@ class AuthorRelations:
         # the second one is the years after
         # Note: With float("inf") as the first value, we consider all publications that were written 
         # before the graduation
-        self.years_offset_phd_matching = [float("inf"), 3]
+        self.years_offset_phd_matching = [float("inf"), 1]
         
         # Define target years as a property of the object
         self.affiliation_target_years = self.calculate_affiliation_target_years()
@@ -526,14 +526,14 @@ class AuthorRelations:
                 )
 
             # Check match criteria
-            criteria_met = coauthorship_flag # We require at least one shared publication.
-            sup_match_by = f"Name match and ≥ {self.n_shared_pubs_min} shared publication(s)."
+            # criteria_met = coauthorship_flag # We require at least one shared publication.
+            # sup_match_by = f"Name match and ≥ {self.n_shared_pubs_min} shared publication(s)."
             
             # criteria_met = same_grad_inst_flag # We require that both are affiliated with the institution in NARCIS at graduation
             # sup_match_by = "Affiliated with NARCIS institution at graduation."
             
-            # criteria_met = bool(len(all_shared_affils)) # We require at least one shared affiliation in the target years around graduation
-            # sup_match_by = "Shared affiliation at graduation."
+            criteria_met = bool(len(all_shared_affils)) # We require at least one shared affiliation in the target years around graduation
+            sup_match_by = "Shared affiliation at graduation."
             
             # Fill aggregated values
             supervisor_data.update({
