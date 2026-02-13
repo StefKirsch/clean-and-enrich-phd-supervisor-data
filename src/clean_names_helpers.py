@@ -168,3 +168,43 @@ def name_sanity_check(name_a: str, name_b: str) -> bool:
     (both checks accent/punctuation-insensitive).
     """
     return first_given_initial_match(name_a, name_b) and surname_word_match(name_a, name_b)
+
+def pivot_per_contributor_to_per_phd(pairs: pd.DataFrame) -> pd.DataFrame:
+    # Group by publication
+    aggregated = pairs.groupby(
+        [
+            "integer_id",
+            "thesis_identifier",
+            "institution",
+            "author_name",
+            "title",
+            "year",
+            "language",
+        ],
+        dropna=False,
+    ).agg(list).reset_index()
+
+    # Make sure the contributor order is a sequence from 1..n_contributors
+    aggregated["contributor_order"] = aggregated["contributor_order"].apply(
+        lambda lst: list(range(1, len(lst) + 1))
+    )
+
+    # Pivot contributors into contributor_1..contributor_n columns
+    pubs_list = []
+    for _, row in aggregated.iterrows():
+        pub_dict = {col: row[col] for col in
+                    ["integer_id", "thesis_identifier", "institution", "author_name", "title", "year", "language"]}
+
+        contributors = row["contributor"]
+        contributor_orders = row["contributor_order"]
+
+        for order in sorted(set(contributor_orders)):
+            idx = order - 1
+            if idx < len(contributors):
+                pub_dict[f"contributor_{order}"] = contributors[idx]
+
+        pubs_list.append(pub_dict)
+
+    pubs = pd.DataFrame(pubs_list).reset_index(drop=True).convert_dtypes()
+    return pubs
+
