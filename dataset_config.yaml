@@ -1,3 +1,11 @@
+# Define the I/O pahts. Supports relative paths
+dataset_path: 'data/cleaned/pubs_with_domain.csv'
+dataset_path_sample_gold_standard: 'data/cleaned/sampled_pubs_for_gold_standard.csv'
+output_filename: 'data/output/author_relations.csv'
+
+# If True, use the dataset "data/cleaned/sampled_pubs_for_gold_standard.csv" over the full dataset
+use_sample_for_gold_standard: false
+
 # Which subset of the dataset to use. Possible values: "biomedical_recent" or empty for all.
 domain:
 
@@ -9,6 +17,7 @@ chunk:
 
 # Number of rows to read from the dataset. 
 # If empty, take the full dataset
+# If use_sample_for_gold_standard == true, sampling will be skipped 
 nrows:
 
 # Choose rank after which we cut of contributors.
