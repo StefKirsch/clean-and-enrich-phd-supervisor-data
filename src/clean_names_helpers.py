@@ -32,8 +32,10 @@ def remove_non_person_contributors_and_export(df, csv_path, nlp, whitelist=[], b
     filtered_df = df[df['contributor'].progress_apply(is_person_name)]
 
     if removed_contributors:  # Only export if there are names to export
-        removed_contributors_df = pd.DataFrame(removed_contributors, columns=['non_person_contributors'])
-        removed_contributors_df.to_csv(csv_path, header=False, index=False)
+            with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
+                writer = csv.writer(csv_file)
+                for name in set(removed_contributors):
+                    writer.writerow([name])
 
     return filtered_df
 
