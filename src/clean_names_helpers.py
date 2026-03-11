@@ -7,20 +7,25 @@ import unicodedata
 import re
 
 def remove_non_person_contributors_and_export(df, csv_path, nlp, whitelist=[], blacklist=[]):
-    global removed_contributors
-    removed_contributors = []  # Reset the list for each call
+    removed_contributors = []
+    person_lookup = set(whitelist)
+    non_person_lookup = set(blacklist)
 
     def is_person_name(name):
-        # Short-circuit detection with whitelist and blacklists
-        if name in whitelist: 
+        # Short-circuit detection with lookup caches
+        if name in person_lookup:
             return True
-        if name in blacklist:
+        if name in non_person_lookup:
+            removed_contributors.append(name) # add removed entry to log
             return False
         doc = nlp(name) # process with model
         is_person = any(ent.label_ == "PER" for ent in doc.ents) # check if any named entitties is a person
-        if not is_person:
-            removed_contributors.append(name) # add removed entry to log
-        return is_person
+        if is_person:
+            person_lookup.add(name)
+            return True
+        non_person_lookup.add(name)
+        removed_contributors.append(name) # add removed entry to log
+        return False
 
     # Wrap df['contributor'].apply in tqdm
     tqdm.pandas(desc="Removing invalid contributors")
