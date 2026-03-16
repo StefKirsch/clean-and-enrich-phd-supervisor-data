@@ -330,7 +330,14 @@ def ensure_and_load_spacy_model(model_name):
     print(f"{model_name} has been loaded!")
     return nlp
 
-
+def load_list(path: str) -> list[str]:
+    with Path(path).open("r", encoding="utf-8") as f:
+        return [
+            line.strip()
+            for line in f
+            if line.strip() and not line.strip().startswith("#") # ignore comments
+        ]
+    
 def merge_near_duplicates_on_col(df: pd.DataFrame, merge_col: str = "institution") -> pd.DataFrame:
     """
     Handle duplicate entries that only differ in one column by merging them together, producing a
