@@ -44,7 +44,8 @@ ORG_WORDS = {
 ORG_WORD_PREFIXES = (
     "rs:", "mumc+:", "cca -", "nca -", "ams -", "api ",
     "department ", "faculty ", "section ", "research ", "academic ",
-    "school ", "center ", "centre ", "institute ", "university "
+    "school ", "center ", "centre ", "institute ", "university ",
+    "promovend",
 )
 
 ORG_WORD_ENDINGS = (
