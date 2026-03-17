@@ -202,7 +202,10 @@ def rule_classify(s: str):
     # Single-token or malformed short strings are ambiguous
     return "review", "ambiguous"
 
-def format_name_to_lastname_firstname(name):
+def format_name_to_firstname_lastname(name):
+    if pd.isna(name):
+        return pd.NA 
+    
     human_name = HumanName(name)
     
     # Extract the last name and first name + middle name
@@ -210,7 +213,7 @@ def format_name_to_lastname_firstname(name):
     first_names = human_name.first + ' ' + human_name.middle
 
     # Combine last name and first names, giving only last name if first names are missing
-    formatted_name = f"{last_name}, {first_names}" if first_names.strip() else last_name
+    formatted_name = f"{first_names} {last_name}" if first_names.strip() else last_name
 
     return formatted_name.strip()
 
