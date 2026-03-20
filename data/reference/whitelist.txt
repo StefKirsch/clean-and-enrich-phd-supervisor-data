@@ -1,0 +1,47 @@
+# NOTE: Add the names here how they would look like after `normalize_name()`
+
+# Contain "recht" or "law"
+Van Loosdrecht, M.
+van Loosdrecht, M.
+van Loosdrecht, M
+van Loosdrecht, M.C.M.
+Van Loosdrecht, M.C.M.
+van Loosdrecht, Mark C.M.
+Loosdrecht, M.C.M. van
+Loosdrecht, Paul H.M. van
+van de Loosdrecht, AA
+van de Loosdrecht, A.A.
+van de Loosdrecht, Arjan
+van de Loosdrecht, Jan
+Schmidt, Albrecht
+Albrecht, W.
+Albrecht, S.
+Albrecht, M.
+Albrecht Weerts
+Law, J.
+Helbrecht, I.
+Lambrecht, Bart
+Robrecht, N. Planken
+Planken, Robrecht N.
+Giesbrecht, T.
+Giesbrecht, Timo
+Giselbrecht, Stefan
+van Groesen, Embrecht W.C.
+Barendrecht, Maurits
+Barendrecht, B.A.
+Barendrecht, MM
+
+# Contain "lab"
+Blab, G.A.
+Blab, Gerhard
+
+# Contain "matter"
+Vicharet Matter, D.
+
+# Contain Leiden
+Leiden, H.A. van
+
+# Contain other org-like keywords
+Logie, C.
+Sixma, T.K.
+van de Groep, Jorik

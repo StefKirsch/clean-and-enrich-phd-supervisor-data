@@ -5,8 +5,8 @@ import numpy as np
 from os import path, makedirs
 from sentence_transformers import util
 
-from src.io_helpers import fetch_supervisors_from_pilot_dataset, remove_illegal_title_characters, ordinal
-from src.clean_names_helpers import format_name_to_lastname_firstname, name_sanity_check
+from src.io_helpers import fetch_supervisors_from_pilot_dataset, remove_illegal_title_characters
+from src.clean_names_helpers import format_name_to_firstname_lastname, name_sanity_check
 
 class AuthorRelations:
     # Class attribute shared by all instances
@@ -913,7 +913,7 @@ def get_supervisors_openalex_ids(repo_url, csv_path):
     )
     
     # Apply name standardization
-    supervisors_std = [format_name_to_lastname_firstname(name) for name in supervisors]
+    supervisors_std = [format_name_to_firstname_lastname(name) for name in supervisors]
     
     # Query OpenAlex for each supervisor and build the dictionary
     supervisors_ids = {

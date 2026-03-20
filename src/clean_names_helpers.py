@@ -1,44 +1,211 @@
 import pandas as pd
 from nameparser import HumanName
-from tqdm.notebook import tqdm  # Import tqdm for Jupyter Notebook
 import spacy
 from spacy.cli import download
+from tqdm.notebook import tqdm  # Import tqdm for Jupyter Notebook
 import unicodedata
 import re
+from pathlib import Path
 
-def remove_non_person_contributors_and_export(df, csv_path, nlp, whitelist=[], blacklist=[]):
-    removed_contributors = []
-    person_lookup = set(whitelist)
-    non_person_lookup = set(blacklist)
+ORG_WORDS = {
+    # English: institutions / units
+    "academy", "academies", "center", "centers", "centre", "centres", "department", "departments", "division",
+    "divisions", "faculty", "faculties", "group", "groups", "institute", "institutes", "lab", "labs",
+    "laboratory", "laboratories", "office", "offices", "programme", "programmes", "program", "programs",
+    "research", "school", "schools", "section", "sections", "study", "studies", "unit", "units", "university",
+    "universities",
 
-    def is_person_name(name):
-        # Short-circuit detection with lookup caches
-        if name in person_lookup:
-            return True
-        if name in non_person_lookup:
-            removed_contributors.append(name) # add removed entry to log
-            return False
-        doc = nlp(name) # process with model
-        is_person = any(ent.label_ == "PER" for ent in doc.ents) # check if any named entitties is a person
-        if is_person:
-            person_lookup.add(name)
-            return True
-        non_person_lookup.add(name)
-        removed_contributors.append(name) # add removed entry to log
-        return False
+    # English: subject / field words
+    "accounting", "algorithm", "algorithms", "algebra", "analysis", "audition", "business", "care", "careers",
+    "child", "clinical", "cognition", "complex", "databases", "democratic", "dentistry", "development",
+    "diseases", "education", "emotion", "energy", "engineering", "environmental", "experimental", "finance",
+    "governance", "health", "history", "human", "humanism", "immunity", "infections", "informatics", "language",
+    "lasers", "law", "learning", "management", "marketing", "mathematics", "matter", "medicine", "metabolism",
+    "networks", "nursing", "orthodontics", "perception", "pharmacy", "philosophy", "physics", "planning",
+    "policy", "praxis", "probability", "public", "security", "social", "stochastics", "storytelling",
+    "tectonics", "theory", "unknown", "xenon",
 
-    # Wrap df['contributor'].apply in tqdm
-    tqdm.pandas(desc="Removing invalid contributors")
-    filtered_df = df[df['contributor'].progress_apply(is_person_name)]
+    # Dutch: institutions / units
+    "academie", "academies", "afdeling", "afdelingen", "bureau", "bureaus", "centrum", "centra", "divisie",
+    "divisies", "eenheid", "eenheden", "faculteit", "faculteiten", "groep", "groepen", "instituut", "instituten",
+    "laboratorium", "laboratoria", "onderzoek", "onderzoeksgroep", "onderzoeksgroepen", "programma", "programma's",
+    "sectie", "secties", "studie", "studies", "universiteit", "universiteiten",
 
-    if removed_contributors:  # Only export if there are names to export
-        removed_contributors_df = pd.DataFrame(removed_contributors, columns=['non_person_contributors'])
-        removed_contributors_df.to_csv(csv_path, header=False, index=False)
+    # Dutch: subject / field words
+    "beeldvorming", "beleid", "farmacie", "geschiedenis", "informatica", "klinisch", "medisch", "onderwijs",
+    "orthodontie", "overig", "overige", "publiek", "zorg", "identiteit",
 
-    return filtered_df
+    # Acronyms / special
+    "ACTA", "AGCI", "AIMMS", "AMIBM", "ANTARES", "ARCNL", "CBITE", "CLUE", "CTC", "CTR", "CvE", "EMGO",
+    "ESoE", "Eurandom", "FMG", "GRAPPA", "IBBA", "IBIS", "ICIS", "IHEF", "IHS", "INTERVICT", "IOO", "IViR",
+    "KNO", "LEARN", "Leiden", "MRI", "NUTRIM", "Sixma", "TILT", "TNO", "WZI", "nvt",
+}
 
+ORG_WORD_PREFIXES = (
+    "rs:", "mumc+:", "cca -", "nca -", "ams -", "api ",
+    "department ", "faculty ", "section ", "research ", "academic ",
+    "school ", "center ", "centre ", "institute ", "university ",
+    "promovend",
+)
 
-def format_name_to_lastname_firstname(name):
+ORG_WORD_ENDINGS = (
+    # English: broad academic / discipline endings
+    "atics", "ation", "chemistry", "circulation", "energy", "health", "iatrics", "iatry", "ineering",
+    "informatics", "istic", "istics", "lab", "literature", "lysis", "magnetic", "magnetics", "media", "medica",
+    "mechanics", "metrics", "metry", "molecular", "nomics", "ologies", "ology", "onomies", "onomy", "physics",
+    "science", "sciences", "spectroscopy", "stics", "surgery", "system", "systems", "therapy", "vision",
+
+    # Dutch: broad academic / discipline endings
+    "atie", "bibliotheek", "chemie", "chirurgie", "informatica", "iatrie", "iatrieën", "istiek", "kunde",
+    "logie", "logieën", "metrie", "nomie", "nomieën", "pedie", "recht", "studie", "studies", "techniek",
+    "therapie", "wetenschap", "wetenschappen",
+)
+
+ORG_RE = re.compile(
+    r"(?:\b(?:and)\b|\b(?:"
+    + "|".join(re.escape(w) for w in sorted(ORG_WORDS, key=len, reverse=True))
+    + r")\b|\w*(?:"
+    + "|".join(re.escape(f) for f in ORG_WORD_ENDINGS)
+    + r")\b)",
+    re.I
+)
+
+# Rules for person parsing
+NAME_TOKEN = r"[A-Za-zÀ-ÖØ-öø-ÿĀ-ž'`’.-]+"
+PARTICLE = r"(?:van|von|de|del|der|den|ten|ter|te|la|le|du|di|da|dos|des|el|al|bin|ibn)"
+SURNAME = rf"(?:{PARTICLE}\s+)*{NAME_TOKEN}(?:[-\s](?:{PARTICLE}\s+)?{NAME_TOKEN})*"
+BASE_SURNAME = rf"{NAME_TOKEN}(?:[-\s]{NAME_TOKEN})*"
+INITIALS = r"(?:[A-Z]\.){1,8}[A-Z]?|[A-Z]{1,6}"
+GIVEN = rf"{NAME_TOKEN}(?:\s+{NAME_TOKEN})*"
+
+TITLE_WORD = r"(?:emerit(?:us|a)(?:\s+prof(?:essor)?)?|prof(?:essor)?|drs?|ir|mr|ing|ba|bsc|ma|msc|ph\.?d|hoogleraar)"
+TITLES = rf"(?:{TITLE_WORD}\.?\s*,?\s*)*"
+
+ANNOTATED_SURNAME = rf"{SURNAME}(?:\s+\(\s*{TITLE_WORD}\s*\))?"
+ANNOTATED_BASE_SURNAME = rf"{BASE_SURNAME}(?:\s+\(\s*{TITLE_WORD}\s*\))?"
+PARTICLE_SEQ = rf"(?:{PARTICLE})(?:\s+{PARTICLE})*"
+
+PERSON_PATTERNS = [
+    # van der Heide, Tjisse / van Dijk, R.A. / Klucharev, VA (Vasily)
+    # Verhoef (Emeritus), Wouter / Preckel, Prof. dr. , Benedikt
+    re.compile(
+        rf"^{ANNOTATED_SURNAME},\s*(?:{TITLES})?(?:{INITIALS}|{GIVEN})(?:\s+\([^)]+\))?,?$",
+        re.I
+    ),
+
+    # Gier, de, Han / Son, van, Willem / Velden, van der, Joep
+    re.compile(
+        rf"^{ANNOTATED_BASE_SURNAME},\s*{PARTICLE_SEQ},\s*(?:{TITLES})?(?:{INITIALS}|{GIVEN})(?:\s+\([^)]+\))?,?$",
+        re.I
+    ),
+
+    # Wit, G.A. de / Velden, A.A.E.M. van der / Have, K. ten
+    re.compile(
+        rf"^{ANNOTATED_BASE_SURNAME},\s*(?:{TITLES})?(?:{INITIALS}|{GIVEN})(?:\s+\([^)]+\))?\s+{PARTICLE_SEQ},?$",
+        re.I
+    ),
+
+    # P.C. Struik / A. van Paassen / S.E.A.T.M. van der Zee / Prof. dr. J. van Dijk
+    re.compile(
+        rf"^(?:{TITLES})?{INITIALS}\s+{SURNAME},?$",
+        re.I
+    ),
+
+    # Vivianne Vleeshouwers / Nel Wognum / Prof. Wouter Verhoef
+    re.compile(
+        rf"^(?:{TITLES})?{GIVEN}\s+{SURNAME},?$",
+        re.I
+    ),
+]
+
+def normalize_name(s: str) -> str:
+    s = unicodedata.normalize("NFKC", str(s))
+    s = re.sub(r"\[\s*No Value\s*\]", "", s, flags=re.I)
+    s = s.strip().strip('"').strip("'")
+    
+    # Remove the exact string "Supervisor:"
+    s = s.replace("Supervisor:", "")
+    
+    # Remove publication footnote markers / daggers / stars
+    s = re.sub(r"[†‡*⁎⁑§¶‖¤※]+", "", s)
+
+    # Map spacing accent symbols to combining marks
+    s = s.translate(str.maketrans({
+        '"': "\u0308",   # diaeresis, e.g. honkim"aki -> honkimäki
+        "¨": "\u0308",   # diaeresis
+        "´": "\u0301",   # acute
+        "`": "\u0300",   # grave
+        "ˆ": "\u0302",   # circumflex
+        "˜": "\u0303",   # tilde
+        "°": "\u030A",   # ring above, e.g. Sj°astad -> Sjåstad
+        "¸": "\u0327",   # cedilla
+    }))
+
+    # Fix misplaced combining marks, e.g. M ́enard -> Ménard / Rottsch¨afer -> Rottschäfer
+    s = re.sub(r"\s*([\u0300-\u036f]+)\s*([A-Za-zÀ-ÖØ-öø-ÿĀ-ž])", r"\2\1", s)
+    s = re.sub(r"([A-Za-zÀ-ÖØ-öø-ÿĀ-ž])\s+([\u0300-\u036f]+)", r"\1\2", s)
+    s = unicodedata.normalize("NFC", s)
+
+    s = s.replace("–", "-").replace("—", "-").replace("‐", "-")
+    s = re.sub(r"\.\.+", ".", s)           # P.C.. -> P.C.
+    s = re.sub(r"\s+", " ", s)
+
+    # Normalize comma junk
+    s = re.sub(r"\s*,\s*", ", ", s)
+    s = re.sub(r"(?:,\s*){2,}", ", ", s)
+
+    return s.strip(" ,")
+
+def rule_classify(s: str):
+    """
+    Returns:
+        decision: 'accept' | 'reject' | 'review'
+        reason: short string
+    """
+    s = normalize_name(s)
+    s_lower = s.lower()
+
+    if not s or s == "--":
+        return "reject", "empty_or_dash"
+
+    # Explicit strong non-person cues
+    if s_lower.startswith(ORG_WORD_PREFIXES):
+        return "reject", "non_person_prefix"
+
+    if ORG_RE.search(s):
+        return "reject", "org_keyword"
+
+    # Digits usually indicate departments / units / codes in your data
+    if any(ch.isdigit() for ch in s):
+        return "reject", "contains_digit"
+
+    # Common organization formatting
+    if s.count(":") + s.count("/") + s.count("&") + s.count("+") >= 1 and len(s.split()) >= 3:
+        return "reject", "org_punctuation_pattern"
+
+    # Very acronym-heavy entries with parentheses are usually non-person
+    if re.search(r"\b[A-Z]{2,}\b", s) and "(" in s and ")" in s and "," not in s:
+        return "reject", "acronym_parenthesis_pattern"
+    
+    # Acronym groups like ITC-EOS
+    if re.search(r"\b[A-Z]{2,}(?:-[A-Z]{2,})+\b", s):
+        return "reject", "acronym_dash_pattern"
+
+    if not any(ch.isalpha() for ch in s):
+        return "reject", "no_letters"
+    
+    # Strong person cues
+    for pattern in PERSON_PATTERNS:
+        if pattern.match(s):
+            return "accept", "person_pattern"
+
+    # Single-token or malformed short strings are ambiguous
+    return "review", "ambiguous"
+
+def format_name_to_firstname_lastname(name):
+    if pd.isna(name):
+        return pd.NA 
+    
     human_name = HumanName(name)
     
     # Extract the last name and first name + middle name
@@ -46,10 +213,106 @@ def format_name_to_lastname_firstname(name):
     first_names = human_name.first + ' ' + human_name.middle
 
     # Combine last name and first names, giving only last name if first names are missing
-    formatted_name = f"{last_name}, {first_names}" if first_names.strip() else last_name
+    formatted_name = f"{first_names} {last_name}" if first_names.strip() else last_name
 
+    # Remove double spaces
+    while "  " in formatted_name:
+        formatted_name = formatted_name.replace("  ", " ")
+    
     return formatted_name.strip()
 
+
+def classify_contributors(
+    df,
+    contributor_col="contributor",
+    whitelist=None,
+    blacklist=None,
+    accept_ambiguous = False,
+    reject_csv_path=None,
+    review_csv_path=None,
+):
+    """
+    Classify contributors into accept / reject / review.
+
+    Returns:
+        accepted_df: rows kept as valid person contributors
+        rejected_df: unique rejected contributor strings with counts + reasons
+        review_df: unique review contributor strings with counts + reasons
+        classified_df: full original df with extra classification columns
+    """
+    whitelist = whitelist or []
+    blacklist = blacklist or []
+
+    # Normalize whitelist/blacklist so matching is robust
+    person_lookup = {normalize_name(x) for x in whitelist}
+    non_person_lookup = {normalize_name(x) for x in blacklist}
+
+    classified_df = df.copy()
+    classified_df[contributor_col] = classified_df[contributor_col].astype(str)
+    classified_df["contributor_normalized"] = classified_df[contributor_col].map(normalize_name)
+
+    unique_names = classified_df["contributor_normalized"].dropna().unique()
+
+    decision_map = {}
+    reason_map = {}
+
+    for name in tqdm(unique_names, desc="Classifying contributors"):
+        # 1) Explicit lists first
+        if name in person_lookup:
+            decision_map[name] = "accept"
+            reason_map[name] = "whitelist"
+            continue
+
+        if name in non_person_lookup:
+            decision_map[name] = "reject"
+            reason_map[name] = "blacklist"
+            continue
+
+        # 2) Rules
+        decision, reason = rule_classify(name)
+        
+        # We can choose to accept ambiguous cases or have them go into the review bucket
+        if accept_ambiguous and decision=="review":
+            decision_map[name] = "accept"
+        else:
+            decision_map[name] = decision
+            
+        reason_map[name] = reason
+            
+    # 3) Map back to full dataframe
+    classified_df["contributor_decision"] = classified_df["contributor_normalized"].map(decision_map)
+    classified_df["contributor_reason"] = classified_df["contributor_normalized"].map(reason_map)
+
+    # 4) Outputs
+    accepted_df = classified_df[classified_df["contributor_decision"] == "accept"].copy().drop(
+        columns=["contributor_normalized", "contributor_decision", "contributor_reason"]
+    )
+
+    summary_df = (
+        classified_df.groupby(
+            [contributor_col, "contributor_normalized", "contributor_decision", "contributor_reason"],
+            dropna=False
+        )
+        .size()
+        .reset_index(name="n_rows")
+        .sort_values(["contributor_decision", "n_rows", contributor_col], ascending=[True, False, True])
+    )
+
+    rejected_df = summary_df[summary_df["contributor_decision"] == "reject"].copy()
+    
+    # We use the contributor_reason here to allow a review bucket even if we accept ambiguous cases
+    review_df = summary_df[summary_df["contributor_reason"] == "ambiguous"].copy()
+
+    # 5) Write logs
+    if reject_csv_path:
+        Path(reject_csv_path).parent.mkdir(parents=True, exist_ok=True)
+        rejected_df.to_csv(reject_csv_path, index=False, encoding="utf-8")
+
+    if review_csv_path:
+        Path(review_csv_path).parent.mkdir(parents=True, exist_ok=True)
+        review_df.to_csv(review_csv_path, index=False, encoding="utf-8")
+
+    return accepted_df, rejected_df, review_df, classified_df
 
 def ensure_and_load_spacy_model(model_name):
     """
@@ -75,7 +338,14 @@ def ensure_and_load_spacy_model(model_name):
     print(f"{model_name} has been loaded!")
     return nlp
 
-
+def load_list(path: str) -> list[str]:
+    with Path(path).open("r", encoding="utf-8") as f:
+        return [
+            line.strip()
+            for line in f
+            if line.strip() and not line.strip().startswith("#") # ignore comments
+        ]
+    
 def merge_near_duplicates_on_col(df: pd.DataFrame, merge_col: str = "institution") -> pd.DataFrame:
     """
     Handle duplicate entries that only differ in one column by merging them together, producing a
