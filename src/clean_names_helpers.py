@@ -215,6 +215,10 @@ def format_name_to_firstname_lastname(name):
     # Combine last name and first names, giving only last name if first names are missing
     formatted_name = f"{first_names} {last_name}" if first_names.strip() else last_name
 
+    # Remove double spaces
+    while "  " in formatted_name:
+        formatted_name = formatted_name.replace("  ", " ")
+    
     return formatted_name.strip()
 
 
