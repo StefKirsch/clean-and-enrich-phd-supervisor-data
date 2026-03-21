@@ -158,8 +158,7 @@ try:
     # Attempt to read the supervisors in the pilot dataset from csv_path
     # If it fails, we get them again from GitHub
     supervisors_in_pilot_dataset = get_supervisors_openalex_ids(repo_url, csv_path)
-    print("Unique Supervisors with OpenAlex IDs:")
-    print(supervisors_in_pilot_dataset)
+    print(f"There are {len(supervisors_in_pilot_dataset)} Unique Supervisors with OpenAlex IDs.")
 except Exception as e:
     print(f"An error occurred: {e}")
 
