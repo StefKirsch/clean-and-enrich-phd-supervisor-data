@@ -19,7 +19,8 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 from os import path
 import matplotlib.pyplot as plt
-from tqdm.notebook import tqdm
+import sys
+from tqdm import tqdm
 
 from src.unabbreviate_institutions import unabbreviate_institutions
 from src.open_alex_helpers import AuthorRelations, find_phd_and_supervisors_in_row, get_supervisors_openalex_ids
@@ -28,7 +29,12 @@ from src.api_cache_helpers import initialize_request_cache
 from src.plotters import PhDMatchPlotter, ContributorMatchPlotter
 
 # Initialize tqdm for progress bars
-tqdm.pandas()
+tqdm.pandas(
+    file=sys.stdout,
+    ncols=100,
+    miniters=1,
+    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+)
 
 # Install the cache before any API calls are made.
 # This will cache every API call to Open Alex and if a cached version of the call is available,
