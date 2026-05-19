@@ -52,7 +52,7 @@ def load_dataset(config: Optional[dict] = None) -> pd.DataFrame:
     # Read the respective dataset
     df = pd.read_csv(actual_dataset_path)
         
-    print(f"Total rows: {len(df)}")
+    print(f"The source dataset has {len(df)} rows.")
 
     # We skip further sampling if we are using the sample for the manual gold standard
     if not use_sample_for_gold_standard:
@@ -86,6 +86,8 @@ def load_dataset(config: Optional[dict] = None) -> pd.DataFrame:
     # Drop rows that don't have a PhD name. 
     # These can occur in the gold standard subset
     df = df.dropna(subset=["phd_name"])
+    
+    print(f"After sampling and removing rows where PhD name is empty, we have {len(df)} rows left.")
     
     return df
 
