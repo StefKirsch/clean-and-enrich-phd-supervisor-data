@@ -15,7 +15,7 @@ class AuthorRelations:
     # Values: supervisor OpenAlex ID
     supervisors_in_pilot_dataset = dict()
     
-    def __init__(self, integer_id, phd_name, title, year, institution, contributors, model, years_tolerance=0, verbosity='INFO'):
+    def __init__(self, integer_id, phd_name, title, year, institution, contributors, model, years_tolerance=0, verbosity='DEBUG'):
         self.integer_id = integer_id
         self.phd_name = phd_name
         self.n_name_search_matches = None # Number of matches for the PhD candidate's name between NARCIS and OpenAlex
@@ -77,31 +77,74 @@ class AuthorRelations:
             return set(range(self.year + self.years_tolerance, self.year + 1))
         
     def setup_logging(self):
-        # Map verbosity levels to logging levels
         verbosity_levels = {
-            'NONE': logging.WARNING,
-            'INFO': logging.INFO,
-            'DEBUG': logging.DEBUG
+            "NONE": logging.WARNING,
+            "INFO": logging.INFO,
+            "DEBUG": logging.DEBUG,
         }
+
         log_level = verbosity_levels.get(self.verbosity, logging.INFO)
-        self.logger.setLevel(log_level)
 
-        # Remove all handlers associated with the logger
-        for handler in self.logger.handlers[:]:
-            self.logger.removeHandler(handler)
-        # Set propagate to False to prevent messages from being printed to the console
-        self.logger.propagate = False
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
 
-        # Create a file handler with UTF-8 encoding
-        file_handler = logging.FileHandler('author_relations.log', encoding='utf-8')
+        file_handler = logging.FileHandler("author_relations.log", encoding="utf-8")
         file_handler.setLevel(log_level)
-
-        # Create a logging format
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
 
-        # Add the handler to the logger
-        self.logger.addHandler(file_handler)
+        def apply_logger_file_policy(
+            name,
+            *,
+            file_handler=None,
+            level=None,
+            enabled=True,
+            propagate=False,
+        ):
+            logger = logging.getLogger(name)
+
+            logger.handlers.clear()
+
+            logger.propagate = propagate
+            logger.disabled = not enabled
+
+            if not enabled:
+                return logger
+
+            if level is not None:
+                logger.setLevel(level)
+
+            if file_handler is not None:
+                logger.addHandler(file_handler)
+
+            return logger
+
+        # Custom logger with matching diagnostics
+        self.logger = apply_logger_file_policy(
+            __name__,
+            level=log_level,
+            file_handler=file_handler,
+        )
+
+        # PyAlex messages (if any)
+        apply_logger_file_policy(
+            "pyalex",
+            level=log_level,
+            file_handler=file_handler,
+        )
+
+        # urllib3 retry diagnostics
+        apply_logger_file_policy(
+            "urllib3.util.retry",
+            level=log_level,
+            file_handler=file_handler,
+        )
+
+        # Suppress normal successful HTTP request chatter by suppressing everything below WARNING
+        apply_logger_file_policy(
+            "urllib3.connectionpool",
+            enabled=False,
+        )
 
     def search_phd_candidate(self):
         """
