@@ -79,19 +79,19 @@ config.retry_backoff_factor = 2 # conservative backoff
 
 # %%
 # Read configuration, including information on which subset of the data to use
-config = read_config('dataset_config.yaml')
+data_config = read_config('dataset_config.yaml')
 
 # Get the file name for the output file
-output_filename = config['output_filename'] or None
+output_filename = data_config['output_filename'] or None
 
 # Rank after which we cut of contributors.
-min_rank_contrib = config['min_rank_contrib'] or None
+min_rank_contrib = data_config['min_rank_contrib'] or None
 if min_rank_contrib:
     print(f"Considering the first {min_rank_contrib} contributors per PhD candidate.")
 else:
     print(f"Considering all contributors.")
 
-pubs_df = load_dataset(config=config)
+pubs_df = load_dataset(config=data_config)
 
 pubs_df
 
