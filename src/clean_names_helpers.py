@@ -345,6 +345,70 @@ def load_list(path: str) -> list[str]:
             for line in f
             if line.strip() and not line.strip().startswith("#") # ignore comments
         ]
+
+def load_int_list(path: str) -> list[int]:
+    return [int(value) for value in load_list(path)]
+
+def sample_with_replacements(
+    df: pd.DataFrame,
+    ids_to_replace, # blacklist to remove and replace
+    n_rows: int = 500,
+    base_seed: int = 12,
+    replacement_seed: int = 13,
+    id_col: str = "integer_id",
+) -> tuple[pd.DataFrame, pd.Index]:
+    """
+    Build a deterministic sample, replacing known unwanted rows with a second sample.
+
+    The base sample is drawn with base_seed. Any rows whose id_col value is in
+    ids_to_replace are replaced, in place, by rows drawn with replacement_seed.
+    Replacement candidates exclude both the unwanted IDs and rows already present
+    in the base sample.
+    """
+    if id_col not in df.columns:
+        raise KeyError(f"Column '{id_col}' is not present in the dataframe.")
+
+    ids_to_replace = set(ids_to_replace)
+    base_sample = df.sample(n=n_rows, random_state=base_seed).copy()
+    
+    # Entries from blacklist that have been found in base sample
+    unwanted_mask = base_sample[id_col].isin(ids_to_replace)
+    n_replacements = int(unwanted_mask.sum())
+
+    if n_replacements == 0:
+        return (
+            base_sample.reset_index(drop=True).convert_dtypes(),
+            pd.Index([], dtype=int),
+        )
+
+    # Subset of df that is not in base sample and should not be replaced  
+    replacement_pool = df[
+        ~df[id_col].isin(ids_to_replace)
+        & ~df[id_col].isin(base_sample[id_col])
+    ]
+
+    if len(replacement_pool) < n_replacements:
+        raise ValueError(
+            f"Need {n_replacements} replacement rows, but only "
+            f"{len(replacement_pool)} eligible rows are available."
+        )
+
+    replacements = replacement_pool.sample(
+        n=n_replacements,
+        random_state=replacement_seed,
+    )
+
+    sampled = base_sample.reset_index(drop=True)
+    replacement_positions = sampled.index[unwanted_mask.to_numpy()]
+    sampled.loc[replacement_positions, :] = replacements.reset_index(drop=True).to_numpy()
+
+    if sampled[id_col].isin(ids_to_replace).any():
+        raise ValueError("Replacement sample still contains an unwanted ID.")
+
+    if sampled[id_col].duplicated().any():
+        raise ValueError("Replacement sample contains duplicate IDs.")
+
+    return sampled.convert_dtypes(), replacement_positions
     
 def merge_near_duplicates_on_col(df: pd.DataFrame, merge_col: str = "institution") -> pd.DataFrame:
     """
