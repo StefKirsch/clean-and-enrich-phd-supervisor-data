@@ -12,6 +12,7 @@
 # config and settings
 dataset_config.yaml
 contact_email.txt
+openalex_api_key.txt
 dimensions_api_key.txt
 scoupus_api_key.csv
 

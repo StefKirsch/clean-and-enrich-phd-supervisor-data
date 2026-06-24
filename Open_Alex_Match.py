@@ -51,17 +51,14 @@ pd.set_option('display.max_rows', 5)
 # Set contact email address to get to use the [polite pool](https://docs.openalex.org/how-to-use-the-api/rate-limits-and-authentication#the-polite-pool). Also, if you are on a premium plan, you can access the higher usage limit by using the associated email address.
 
 # %%
-# Get contact email address from file
-email_file_path = 'contact_email.txt'
+# Get contact email address and api key from files
+def read_secret(filename):
+    if path.isfile(filename):
+        with open(filename) as f:
+            return f.read().strip()
 
-if path.isfile(email_file_path):
-    with open(email_file_path, 'r') as file:
-        email_address = file.read().strip()
-
-    # Assign the email address to the pyalex configuration
-    config.email = email_address
-
-config.email
+config.email = read_secret("contact_email.txt")
+config.api_key = read_secret("openalex_api_key.txt")
 
 # %% [markdown]
 # Configure number of retries and backoff factor
