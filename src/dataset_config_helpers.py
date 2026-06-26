@@ -15,6 +15,10 @@ def read_config(config_path: str) -> dict:
     print(f"Reading configuration from {config_path}...")
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
+        
+    if config.get('use_sample_for_gold_standard', None):
+        config.output_filename = config.get('output_filename_gold_standard', None)
+        
     return config
 
 def load_dataset(config: Optional[dict] = None) -> pd.DataFrame:
