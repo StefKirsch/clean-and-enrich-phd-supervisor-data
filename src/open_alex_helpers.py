@@ -1,7 +1,11 @@
 import logging
+from logging.handlers import RotatingFileHandler
+from time import monotonic
+
 from pyalex import Authors, Works, config
 import pandas as pd
 import numpy as np
+from requests.exceptions import RequestException
 from os import path, makedirs
 from sentence_transformers import util
 
@@ -14,6 +18,7 @@ class AuthorRelations:
     # Keys: supervisor name 
     # Values: supervisor OpenAlex ID
     supervisors_in_pilot_dataset = dict()
+    _log_handler = None
     
     def __init__(self, integer_id, phd_name, title, year, institution, contributors, model, years_tolerance=0, verbosity='DEBUG'):
         self.integer_id = integer_id
@@ -37,6 +42,7 @@ class AuthorRelations:
         self.phd_candidate = None
         self.phd_match_by = None
         self.potential_supervisors = []
+        self.processing_error = None
         
         # NLP model
         self.model = model
@@ -89,9 +95,20 @@ class AuthorRelations:
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
 
-        file_handler = logging.FileHandler("author_relations.log", encoding="utf-8")
+        if self.__class__._log_handler is None:
+            file_handler = RotatingFileHandler(
+                "author_relations.log",
+                maxBytes=20 * 1024 * 1024,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(formatter)
+            file_handler._author_relations_handler = True
+            self.__class__._log_handler = file_handler
+        else:
+            file_handler = self.__class__._log_handler
+
         file_handler.setLevel(log_level)
-        file_handler.setFormatter(formatter)
 
         def apply_logger_file_policy(
             name,
@@ -103,8 +120,6 @@ class AuthorRelations:
         ):
             logger = logging.getLogger(name)
 
-            logger.handlers.clear()
-
             logger.propagate = propagate
             logger.disabled = not enabled
 
@@ -114,7 +129,7 @@ class AuthorRelations:
             if level is not None:
                 logger.setLevel(level)
 
-            if file_handler is not None:
+            if file_handler is not None and file_handler not in logger.handlers:
                 logger.addHandler(file_handler)
 
             return logger
@@ -140,7 +155,14 @@ class AuthorRelations:
             file_handler=file_handler,
         )
 
-        # Suppress normal successful HTTP request chatter by suppressing everything below WARNING
+        # Timed start/end/failure messages for each OpenAlex request.
+        apply_logger_file_policy(
+            "openalex.http",
+            level=logging.INFO,
+            file_handler=file_handler,
+        )
+
+        # Suppress normal successful HTTP request chatter.
         apply_logger_file_policy(
             "urllib3.connectionpool",
             enabled=False,
@@ -656,7 +678,8 @@ class AuthorRelations:
             'is_sup_in_pilot_dataset', 
             'n_shared_pubs', 
             'shared_pubs', 
-            'is_thesis_coauthor'
+            'is_thesis_coauthor',
+            'processing_error',
         ]
 
         integer_id = self.integer_id
@@ -717,12 +740,16 @@ class AuthorRelations:
                 'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
                 'n_shared_pubs': len(shared_pubs),
                 'shared_pubs': shared_pubs,
-                'is_thesis_coauthor': is_thesis_coauthor
+                'is_thesis_coauthor': is_thesis_coauthor,
+                'processing_error': self.processing_error,
             }
             results_list.append(result_row)
         
         if not results_list:
-            self.logger.warning("PhD candidate confirmed, but no supervisors found.")
+            if self.phd_candidate:
+                self.logger.warning("PhD candidate confirmed, but no supervisors found.")
+            else:
+                self.logger.warning("No confirmed PhD candidate or supervisors found.")
             # Create a single row with the data we have and the others as None
             result_row = {col: None for col in columns}
             result_row['integer_id'] = integer_id
@@ -741,6 +768,7 @@ class AuthorRelations:
             result_row['affiliation_match'] = self.affiliation_match
             result_row['phd_match_score'] = self.phd_match_score
             result_row['phd_match_by'] = self.phd_match_by
+            result_row['processing_error'] = self.processing_error
             # The supervisor-related columns remain None
             results_df = pd.DataFrame([result_row], columns=columns)
         else:
@@ -893,14 +921,41 @@ def find_phd_and_supervisors_in_row(row, model):
         verbosity='DEBUG'  # Set to 'NONE' for production
     )
     
-    # Search for the PhD candidate
-    author_relations.search_phd_candidate()
-    
-    # Find potential supervisors among the contributors
-    author_relations.collect_supervision_metadata()
+    started_at = monotonic()
+    author_relations.logger.info(
+        "ROW START: integer_id=%s phd_name=%r year=%s contributors=%s",
+        integer_id,
+        phd_name,
+        year,
+        len(contributors),
+    )
+
+    try:
+        # Search for the PhD candidate
+        author_relations.search_phd_candidate()
+
+        # Find potential supervisors among the contributors
+        author_relations.collect_supervision_metadata()
+    except RequestException as exc:
+        # Preserve the row and continue with the dataset after bounded retries
+        # are exhausted. The output makes incomplete records explicit.
+        author_relations.processing_error = f"{type(exc).__name__}: {exc}"
+        author_relations.logger.exception(
+            "ROW NETWORK ERROR: integer_id=%s phd_name=%r",
+            integer_id,
+            phd_name,
+        )
     
     # Get the DataFrame results
     results_df = author_relations.get_results()
+
+    author_relations.logger.info(
+        "ROW END: integer_id=%s phd_name=%r elapsed=%.1fs error=%s",
+        integer_id,
+        phd_name,
+        monotonic() - started_at,
+        author_relations.processing_error is not None,
+    )
     
     return results_df
     

@@ -25,7 +25,7 @@ from tqdm import tqdm
 from src.unabbreviate_institutions import unabbreviate_institutions
 from src.open_alex_helpers import AuthorRelations, find_phd_and_supervisors_in_row, get_supervisors_openalex_ids
 from src.dataset_config_helpers import read_config, load_dataset
-from src.api_cache_helpers import initialize_request_cache
+from src.api_cache_helpers import initialize_request_cache, configure_pyalex_http_timeout
 from src.plotters import PhDMatchPlotter, ContributorMatchPlotter
 
 # Initialize tqdm for progress bars
@@ -65,8 +65,14 @@ config.api_key = read_secret("openalex_api_key.txt")
 # Pyalex is using [urllib3.util.Retry](https://urllib3.readthedocs.io/en/stable/reference/urllib3.util.html) for retrying.
 
 # %%
-config.max_retries = 7
-config.retry_backoff_factor = 2 # conservative backoff
+config.max_retries = 3
+config.retry_backoff_factor = 1
+configure_pyalex_http_timeout(
+    connect_timeout=5,
+    read_timeout=20,
+    respect_retry_after=False,
+    max_retry_backoff=10,
+)
 
 # %% [markdown]
 # ## 2. Load datasets
@@ -180,14 +186,35 @@ model = SentenceTransformer("allenai-specter")
 # set the dict to overwrite the default class attribute specified in src/open_alex_helpers.py
 AuthorRelations.supervisors_in_pilot_dataset = supervisors_in_pilot_dataset
 
-# Apply the function to each row with a constant, preloaded model
-extraction_series = pubs_high_contrib_df.progress_apply(
-    lambda row: find_phd_and_supervisors_in_row(row, model),
-    axis=1
-    )
+# Process rows explicitly so the progress bar shows which record is active.
+extraction_frames = []
+with tqdm(
+    total=len(pubs_high_contrib_df),
+    file=sys.stdout,
+    ncols=120,
+    miniters=1,
+    desc="Matching",
+    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}",
+) as progress:
+    for row_number, (_, row) in enumerate(pubs_high_contrib_df.iterrows(), start=1):
+        progress.set_postfix_str(
+            f"row={row_number}, id={row['integer_id']}, phd={str(row['phd_name'])[:30]}",
+            refresh=True,
+        )
+        row_result = find_phd_and_supervisors_in_row(row, model)
+        extraction_frames.append(row_result)
+        if row_result["processing_error"].notna().any():
+            tqdm.write(
+                f"OpenAlex request failed for row {row_number} "
+                f"(id={row['integer_id']}, phd={row['phd_name']!r}); "
+                "the row was retained with processing_error set. "
+                "See author_relations.log for details.",
+                file=sys.stdout,
+            )
+        progress.update()
 
-# Concatenate all DataFrames into one
-extraction_df = pd.concat(list(extraction_series), ignore_index=True)
+# Concatenate all per-PhD results into one DataFrame.
+extraction_df = pd.concat(extraction_frames, ignore_index=True)
 
 extraction_df.to_csv(output_filename, index=False)
 
