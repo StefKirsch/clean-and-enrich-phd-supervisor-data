@@ -632,6 +632,7 @@ class AuthorRelations:
             'phd_id', 
             'phd_orcid',
             'n_name_search_matches',
+            'duplicate_phds',
             'year', 
             'title', 
             'title_open_alex', 
@@ -693,6 +694,7 @@ class AuthorRelations:
                 'phd_id': phd_id,
                 'phd_orcid': phd_orcid,
                 'n_name_search_matches': self.n_name_search_matches,
+                'duplicate_phds': None,
                 'year': self.year,
                 'title': self.title,
                 'title_open_alex': title_open_alex,
@@ -857,6 +859,69 @@ def compute_and_sort_works_by_title_similarities(works: pd.DataFrame, reference_
     works = works.sort_values("similarity", ascending=False)
     
     return works
+
+
+def remove_duplicate_phd_candidates(extraction_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove duplicate PhD candidates with different integer IDs.
+
+    Prefer ORCIDs for identifying candidates and use OpenAlex IDs when no ORCID
+    is available. For duplicates, keep the integer ID with the most confirmed
+    contributors. Ties are resolved by keeping the first integer ID. Add all
+    duplicate PhD names and OpenAlex IDs to the retained candidate for diagnostics.
+    """
+    candidates = (
+        extraction_df.drop_duplicates(subset="integer_id").copy().reset_index(drop=True)
+    )
+    candidates["duplicate_id"] = (
+        candidates["phd_orcid"].replace("", pd.NA).fillna(candidates["phd_id"])
+    )
+    candidates["n_confirmed_contributors"] = candidates["integer_id"].map(
+        extraction_df.groupby("integer_id", sort=False)["contributor_confirmed"].sum()
+    )
+
+    candidates_with_id = candidates[candidates["duplicate_id"].notna()]
+    duplicate_integer_ids = []
+    duplicate_phds_by_integer_id = {}
+
+    for _, duplicate_candidates in candidates_with_id.groupby("duplicate_id", sort=False):
+        if len(duplicate_candidates) == 1:
+            continue
+
+        kept_index = duplicate_candidates["n_confirmed_contributors"].idxmax()
+        kept_candidate = duplicate_candidates.loc[[kept_index]]
+        removed_candidates = duplicate_candidates.drop(index=kept_index)
+        ordered_candidates = pd.concat([kept_candidate, removed_candidates])
+        kept_integer_id = kept_candidate["integer_id"].iloc[0]
+
+        duplicate_integer_ids.extend(removed_candidates["integer_id"])
+        duplicate_phds_by_integer_id[kept_integer_id] = (
+            ordered_candidates[["phd_name", "phd_id"]].to_dict("records")
+        )
+
+    result = extraction_df[
+        ~extraction_df["integer_id"].isin(duplicate_integer_ids)
+    ].copy()
+    duplicate_phds = pd.Series(
+        [
+            duplicate_phds_by_integer_id.get(integer_id)
+            for integer_id in result["integer_id"]
+        ],
+        index=result.index,
+        dtype=object
+    )
+
+    if "duplicate_phds" in result.columns:
+        result["duplicate_phds"] = duplicate_phds
+    else:
+        column_index = (
+            result.columns.get_loc("n_name_search_matches") + 1
+            if "n_name_search_matches" in result.columns
+            else len(result.columns)
+        )
+        result.insert(column_index, "duplicate_phds", duplicate_phds)
+
+    return result
 
 
 def find_phd_and_supervisors_in_row(row, model):

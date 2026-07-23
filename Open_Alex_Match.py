@@ -23,7 +23,12 @@ import sys
 from tqdm import tqdm
 
 from src.unabbreviate_institutions import unabbreviate_institutions
-from src.open_alex_helpers import AuthorRelations, find_phd_and_supervisors_in_row, get_supervisors_openalex_ids
+from src.open_alex_helpers import (
+    AuthorRelations,
+    find_phd_and_supervisors_in_row,
+    get_supervisors_openalex_ids,
+    remove_duplicate_phd_candidates
+)
 from src.dataset_config_helpers import read_config, load_dataset
 from src.api_cache_helpers import initialize_request_cache
 from src.plotters import PhDMatchPlotter, ContributorMatchPlotter
@@ -189,17 +194,17 @@ extraction_series = pubs_high_contrib_df.progress_apply(
 # Concatenate all DataFrames into one
 extraction_df = pd.concat(list(extraction_series), ignore_index=True)
 
-extraction_df.to_csv(output_filename, index=False)
-
 extraction_df
 
 # %% [markdown]
 # ### Handle duplicate PhDs
 
 # %%
-dups = extraction_df[extraction_df.duplicated(subset=['phd_id'], keep=False)].sort_values(by='phd_name')
+extraction_df = remove_duplicate_phd_candidates(extraction_df)
 
-dups
+extraction_df.to_csv(output_filename, index=False)
+
+extraction_df
 
 # %% [markdown]
 # ## 4. Analysis and Visualization
