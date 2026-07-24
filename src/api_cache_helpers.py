@@ -95,11 +95,10 @@ def configure_pyalex_http_timeout(
                 raise
 
             _LOGGER.info(
-                "OpenAlex request finished in %.1fs: status=%s cache=%s url=%s",
+                "OpenAlex request finished in %.1fs: status=%s cache=%s",
                 monotonic() - started_at,
                 response.status_code,
                 getattr(response, "from_cache", False),
-                url,
             )
             return response
 
