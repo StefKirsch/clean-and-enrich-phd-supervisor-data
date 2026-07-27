@@ -1,12 +1,60 @@
 import logging
+from contextvars import ContextVar
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
+from os import getpid, path, makedirs
+from time import monotonic
+
 from pyalex import Authors, Works, config
 import pandas as pd
 import numpy as np
-from os import path, makedirs
+from requests.exceptions import RequestException
 from sentence_transformers import util
 
+from src.api_cache_helpers import OpenAlexDailyLimitError
 from src.io_helpers import fetch_supervisors_from_pilot_dataset, remove_illegal_title_characters
 from src.clean_names_helpers import format_name_to_firstname_lastname, name_sanity_check
+
+
+_RUN_ID = f"{datetime.now():%Y%m%d-%H%M%S}-pid{getpid()}"
+_CURRENT_RECORD = ContextVar(
+    "openalex_record",
+    default={
+        "completed_rows": "-",
+        "row_number": "-",
+        "total_rows": "-",
+        "record_id": "-",
+    },
+)
+
+
+class _ExtractionContextFilter(logging.Filter):
+    """Add shared correlation fields to every technical and progress entry."""
+
+    def filter(self, record):
+        record_context = _CURRENT_RECORD.get()
+        record.run_id = _RUN_ID
+        record.completed_rows = record_context["completed_rows"]
+        record.row_number = record_context["row_number"]
+        record.total_rows = record_context["total_rows"]
+        record.record_id = record_context["record_id"]
+        return True
+
+
+class _NonTechnicalContentFilter(logging.Filter):
+    """Keep domain-level search and matching content out of technical noise."""
+
+    _TECHNICAL_MESSAGE_PREFIXES = (
+        "ROW START:",
+        "ROW END:",
+        "ROW NETWORK ERROR:",
+    )
+
+    def filter(self, record):
+        return not record.getMessage().startswith(
+            self._TECHNICAL_MESSAGE_PREFIXES
+        )
+
 
 class AuthorRelations:
     # Class attribute shared by all instances
@@ -14,8 +62,11 @@ class AuthorRelations:
     # Keys: supervisor name 
     # Values: supervisor OpenAlex ID
     supervisors_in_pilot_dataset = dict()
+    _technical_log_handler = None
+    _nontechnical_log_handler = None
+    _run_started_logged = False
     
-    def __init__(self, integer_id, phd_name, title, year, institution, contributors, model, years_tolerance=0, verbosity='DEBUG'):
+    def __init__(self, integer_id, phd_name, title, year, institution, contributors, model, years_tolerance=0):
         self.integer_id = integer_id
         self.phd_name = phd_name
         self.n_name_search_matches = None # Number of matches for the PhD candidate's name between NARCIS and OpenAlex
@@ -37,6 +88,11 @@ class AuthorRelations:
         self.phd_candidate = None
         self.phd_match_by = None
         self.potential_supervisors = []
+        self.processing_error = None
+        self.progress_step = 0
+        self.current_progress_event = None
+        self.active_contributor_name = None
+        self.active_contributor_rank = None
         
         # NLP model
         self.model = model
@@ -57,10 +113,9 @@ class AuthorRelations:
         # Minimum number of shared publications required for a contributor match 
         self.n_shared_pubs_min = 1
         
-        self.verbosity = verbosity.upper()
-        
         # Setup logging
         self.logger = logging.getLogger(__name__)
+        self.progress_logger = logging.getLogger("extraction.progress")
         self.setup_logging()
 
     def calculate_affiliation_target_years(self):
@@ -77,21 +132,57 @@ class AuthorRelations:
             return set(range(self.year + self.years_tolerance, self.year + 1))
         
     def setup_logging(self):
-        verbosity_levels = {
-            "NONE": logging.WARNING,
-            "INFO": logging.INFO,
-            "DEBUG": logging.DEBUG,
-        }
-
-        log_level = verbosity_levels.get(self.verbosity, logging.INFO)
-
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        technical_formatter = logging.Formatter(
+            "%(asctime)s - run=%(run_id)s - "
+            "progress=%(completed_rows)s/%(total_rows)s - "
+            "active_row=%(row_number)s/%(total_rows)s - id=%(record_id)s - "
+            "%(name)s - %(levelname)s - %(message)s"
         )
+        # This is the original author-relations log format. The handler below
+        # receives only the semantic search and matching trace, while request,
+        # retry, timing, and correlation diagnostics stay in extraction.log.
+        nontechnical_formatter = logging.Formatter(
+            "%(asctime)s - %(message)s"
+        )
+        context_filter = _ExtractionContextFilter()
 
-        file_handler = logging.FileHandler("author_relations.log", encoding="utf-8")
-        file_handler.setLevel(log_level)
-        file_handler.setFormatter(formatter)
+        if self.__class__._technical_log_handler is None:
+            technical_handler = RotatingFileHandler(
+                "extraction.log",
+                maxBytes=20 * 1024 * 1024,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            technical_handler.setFormatter(technical_formatter)
+            technical_handler.addFilter(context_filter)
+            technical_handler._author_relations_handler = True
+            self.__class__._technical_log_handler = technical_handler
+
+            nontechnical_handler = RotatingFileHandler(
+                "author_relations.log",
+                maxBytes=20 * 1024 * 1024,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            nontechnical_handler.setLevel(logging.DEBUG)
+            nontechnical_handler.setFormatter(nontechnical_formatter)
+            nontechnical_handler.addFilter(_NonTechnicalContentFilter())
+            nontechnical_handler._author_relations_content_handler = True
+            self.__class__._nontechnical_log_handler = nontechnical_handler
+
+            # Start each run in clean active files while preserving previous
+            # runs in the normal numbered rotation backups. This also moves
+            # the legacy technical author_relations.log out of the active
+            # human-readable file on the first run after the rename.
+            for handler in (technical_handler, nontechnical_handler):
+                if path.exists(handler.baseFilename) and path.getsize(handler.baseFilename):
+                    handler.doRollover()
+        else:
+            technical_handler = self.__class__._technical_log_handler
+            nontechnical_handler = self.__class__._nontechnical_log_handler
+
+        technical_handler.setLevel(logging.DEBUG)
+        nontechnical_handler.setLevel(logging.DEBUG)
 
         def apply_logger_file_policy(
             name,
@@ -103,8 +194,6 @@ class AuthorRelations:
         ):
             logger = logging.getLogger(name)
 
-            logger.handlers.clear()
-
             logger.propagate = propagate
             logger.disabled = not enabled
 
@@ -114,7 +203,7 @@ class AuthorRelations:
             if level is not None:
                 logger.setLevel(level)
 
-            if file_handler is not None:
+            if file_handler is not None and file_handler not in logger.handlers:
                 logger.addHandler(file_handler)
 
             return logger
@@ -122,28 +211,62 @@ class AuthorRelations:
         # Custom logger with matching diagnostics
         self.logger = apply_logger_file_policy(
             __name__,
-            level=log_level,
-            file_handler=file_handler,
+            level=logging.DEBUG,
+            file_handler=technical_handler,
         )
+        if nontechnical_handler not in self.logger.handlers:
+            self.logger.addHandler(nontechnical_handler)
 
         # PyAlex messages (if any)
         apply_logger_file_policy(
             "pyalex",
-            level=log_level,
-            file_handler=file_handler,
+            level=logging.DEBUG,
+            file_handler=technical_handler,
         )
 
         # urllib3 retry diagnostics
         apply_logger_file_policy(
             "urllib3.util.retry",
-            level=log_level,
-            file_handler=file_handler,
+            level=logging.DEBUG,
+            file_handler=technical_handler,
         )
 
-        # Suppress normal successful HTTP request chatter by suppressing everything below WARNING
+        # Timed start/end/failure messages for each OpenAlex request.
+        apply_logger_file_policy(
+            "openalex.http",
+            level=logging.INFO,
+            file_handler=technical_handler,
+        )
+
+        # Synthetic progress/correlation messages are technical diagnostics.
+        self.progress_logger = apply_logger_file_policy(
+            "extraction.progress",
+            level=logging.INFO,
+            file_handler=technical_handler,
+        )
+
+        # Suppress normal successful HTTP request chatter.
         apply_logger_file_policy(
             "urllib3.connectionpool",
             enabled=False,
+        )
+
+        if not self.__class__._run_started_logged:
+            self.progress_logger.info(
+                "step=-- | RUN START | Detailed diagnostics: extraction.log; "
+                "match entries using run, active row, id, and step."
+            )
+            self.__class__._run_started_logged = True
+
+    def log_progress(self, event, message):
+        """Write one correlated, human-readable step to both log files."""
+        self.progress_step += 1
+        self.current_progress_event = event
+        self.progress_logger.info(
+            "step=%02d | %s | %s",
+            self.progress_step,
+            event,
+            message,
         )
 
     def search_phd_candidate(self):
@@ -155,7 +278,7 @@ class AuthorRelations:
             match_score = n_close_matches + (50 if exact_match) + (20 if near_exact_match) + (20 if affiliation_match)
         Then we pick the candidate with the highest match_score.
 
-        If in debug mode, print a table representation of the sorted DataFrame.
+        Log a table representation of the sorted DataFrame.
         """
         self.logger.info(f"Searching for PhD candidate: {self.phd_name}")
         
@@ -268,14 +391,11 @@ class AuthorRelations:
         )
 
 
-        # If logger is in debug mode, print the ranked table
-        if self.logger.isEnabledFor(logging.DEBUG):
-            # Select the columns most relevant for debugging the ranking
-            columns_to_show = [
-                'candidate_name', 'candidate_id', 'candidate_orcid', 'match_score',
-                'max_similarity', 'n_close_matches', 'exact_match', 'near_exact_match', 'affiliation_match'
-            ]
-            self.logger.debug(f"Ranked candidates:\n{candidates_info_with_scores[columns_to_show].to_string(index=False)}")
+        columns_to_show = [
+            'candidate_name', 'candidate_id', 'candidate_orcid', 'match_score',
+            'max_similarity', 'n_close_matches', 'exact_match', 'near_exact_match', 'affiliation_match'
+        ]
+        self.logger.debug(f"Ranked candidates:\n{candidates_info_with_scores[columns_to_show].to_string(index=False)}")
 
         # Select the row of the best candidate (highest match_score) and convert that to dict
         best_candidate_info = candidates_info_with_scores.iloc[0].to_dict()
@@ -329,8 +449,7 @@ class AuthorRelations:
         affiliations = candidate.get('affiliations', [])
         match_found = False
 
-        if self.verbosity == 'DEBUG':
-            self.logger.debug(f"Target Institution: '{self.institution}', Target Years: {self.affiliation_target_years}")
+        self.logger.debug(f"Target Institution: '{self.institution}', Target Years: {self.affiliation_target_years}")
 
         for affiliation in affiliations:
             institution_name = affiliation['institution']['display_name']
@@ -443,6 +562,10 @@ class AuthorRelations:
                 "PhD candidate not confirmed. Cannot find potential supervisors; "
                 "recording contributors only with NARCIS data."
             )
+            self.log_progress(
+                "SUPERVISOR CHECK SKIPPED",
+                "The PhD candidate was not confirmed; contributor names were retained.",
+            )
 
             for idx, contributor_name in enumerate(self.contributors):
                 contributor_rank = idx + 1
@@ -462,6 +585,10 @@ class AuthorRelations:
             self.logger.warning(
                 "PhD candidate has no affiliations in target years. Cannot find potential supervisors; "
                 "recording contributors only with NARCIS data."
+            )
+            self.log_progress(
+                "SUPERVISOR CHECK SKIPPED",
+                "No affiliation was found around graduation; contributor names were retained.",
             )
 
             for idx, contributor_name in enumerate(self.contributors):
@@ -484,7 +611,13 @@ class AuthorRelations:
 
         for idx, contributor_name in enumerate(self.contributors):
             contributor_rank = idx + 1
+            self.active_contributor_name = contributor_name
+            self.active_contributor_rank = contributor_rank
             self.logger.debug(f"Processing contributor #{contributor_rank}: {contributor_name}")
+            self.log_progress(
+                "CONTRIBUTOR START",
+                f"{contributor_rank}/{len(self.contributors)} | name={contributor_name!r}",
+            )
 
             # Search for contributors in OpenAlex
             openalex_candidates = Authors().search(contributor_name).get()
@@ -504,6 +637,11 @@ class AuthorRelations:
                     f"No OpenAlex matches for '{contributor_name}'. Adding placeholder entry."
                 )
                 self.potential_supervisors.append(supervisor_data)
+                self.log_progress(
+                    "CONTRIBUTOR END",
+                    f"{contributor_rank}/{len(self.contributors)} | "
+                    f"name={contributor_name!r} | supervisor confirmed=no",
+                )
                 continue
 
             # Identify candidates with either shared institution or shared publications
@@ -606,6 +744,12 @@ class AuthorRelations:
                 
             # Append the data before moving to the next supervisor listed in NARCIS
             self.potential_supervisors.append(supervisor_data)
+            self.log_progress(
+                "CONTRIBUTOR END",
+                f"{contributor_rank}/{len(self.contributors)} | "
+                f"name={contributor_name!r} | "
+                f"supervisor confirmed={'yes' if criteria_met else 'no'}",
+            )
 
         self.logger.info(
             f"Processed {len(self.contributors)} contributors; "
@@ -657,7 +801,8 @@ class AuthorRelations:
             'is_sup_in_pilot_dataset', 
             'n_shared_pubs', 
             'shared_pubs', 
-            'is_thesis_coauthor'
+            'is_thesis_coauthor',
+            'processing_error',
         ]
 
         integer_id = self.integer_id
@@ -719,12 +864,16 @@ class AuthorRelations:
                 'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
                 'n_shared_pubs': len(shared_pubs),
                 'shared_pubs': shared_pubs,
-                'is_thesis_coauthor': is_thesis_coauthor
+                'is_thesis_coauthor': is_thesis_coauthor,
+                'processing_error': self.processing_error,
             }
             results_list.append(result_row)
         
         if not results_list:
-            self.logger.warning("PhD candidate confirmed, but no supervisors found.")
+            if self.phd_candidate:
+                self.logger.warning("PhD candidate confirmed, but no supervisors found.")
+            else:
+                self.logger.warning("No confirmed PhD candidate or supervisors found.")
             # Create a single row with the data we have and the others as None
             result_row = {col: None for col in columns}
             result_row['integer_id'] = integer_id
@@ -743,6 +892,7 @@ class AuthorRelations:
             result_row['affiliation_match'] = self.affiliation_match
             result_row['phd_match_score'] = self.phd_match_score
             result_row['phd_match_by'] = self.phd_match_by
+            result_row['processing_error'] = self.processing_error
             # The supervisor-related columns remain None
             results_df = pd.DataFrame([result_row], columns=columns)
         else:
@@ -945,29 +1095,179 @@ def find_phd_and_supervisors_in_row(row, model):
     institution = row['institution']
     contributors = [row[f'contributor_{i}'] for i in range(1, 11) if pd.notna(row.get(f'contributor_{i}', None))]
     
-    # Create an instance of AuthorRelations
-    author_relations = AuthorRelations(
-        integer_id=integer_id,
-        phd_name=phd_name,
-        title=title,
-        year=year,
-        institution=institution,
-        contributors=contributors,
-        model=model,
-        years_tolerance=-4, # cf. issue #19
-        verbosity='DEBUG'  # Set to 'NONE' for production
+    record_context_token = _CURRENT_RECORD.set(
+        {
+            "completed_rows": (
+                row_number - 1
+                if isinstance(row_number, int)
+                else "-"
+            ),
+            "row_number": row_number if row_number is not None else "-",
+            "total_rows": total_rows if total_rows is not None else "-",
+            "record_id": integer_id,
+        }
     )
-    
-    # Search for the PhD candidate
-    author_relations.search_phd_candidate()
-    
-    # Find potential supervisors among the contributors
-    author_relations.collect_supervision_metadata()
-    
-    # Get the DataFrame results
-    results_df = author_relations.get_results()
-    
-    return results_df
+    try:
+        # Create an instance of AuthorRelations.
+        author_relations = AuthorRelations(
+            integer_id=integer_id,
+            phd_name=phd_name,
+            title=title,
+            year=year,
+            institution=institution,
+            contributors=contributors,
+            model=model,
+            years_tolerance=-4, # cf. issue #19
+        )
+
+        started_at = monotonic()
+        author_relations.log_progress(
+            "RECORD START",
+            f"PhD={phd_name!r} | year={year} | "
+            f"listed contributors={len(contributors)}",
+        )
+        author_relations.logger.info(
+            "ROW START: integer_id=%s phd_name=%r year=%s contributors=%s",
+            integer_id,
+            phd_name,
+            year,
+            len(contributors),
+        )
+
+        try:
+            author_relations.log_progress(
+                "PHD SEARCH START",
+                f"Searching for PhD candidate {phd_name!r}.",
+            )
+            author_relations.search_phd_candidate()
+            matched_phd_name = (
+                author_relations.phd_candidate["display_name"]
+                if author_relations.phd_candidate
+                else None
+            )
+            author_relations.log_progress(
+                "PHD SEARCH END",
+                (
+                    f"Candidate confirmed=yes | matched name={matched_phd_name!r}"
+                    if author_relations.phd_match_by
+                    else "Candidate confirmed=no"
+                ),
+            )
+
+            author_relations.log_progress(
+                "SUPERVISOR CHECK START",
+                f"Checking {len(contributors)} listed contributor(s).",
+            )
+            author_relations.collect_supervision_metadata()
+            confirmed_supervisors = sum(
+                1
+                for supervisor in author_relations.potential_supervisors
+                if supervisor["supervisor_confirmed"]
+            )
+            author_relations.log_progress(
+                "SUPERVISOR CHECK END",
+                f"Confirmed supervisors={confirmed_supervisors}.",
+            )
+        except OpenAlexDailyLimitError:
+            # A daily quota cannot recover on the next row. Let the top-level
+            # extraction stop before it writes a plausible-looking but
+            # incomplete output dataset.
+            raise
+        except RequestException as exc:
+            # Preserve the row and continue with the dataset after bounded
+            # retries are exhausted. Technical details stay out of the
+            # human-readable progress log.
+            author_relations.processing_error = f"{type(exc).__name__}: {exc}"
+
+            error_type = type(exc).__name__
+            if author_relations.current_progress_event == "PHD SEARCH START":
+                skipped_content_message = (
+                    "The OpenAlex request did not complete after retries during the PhD "
+                    f"candidate search. Skipped PhD matching and all "
+                    f"{len(contributors)} listed contributor checks for this "
+                    "record; a placeholder or partial record was retained."
+                )
+                skipped_data_message = (
+                    f"OpenAlex API error after retries ({error_type}) during the "
+                    f"PhD candidate search. PhD matching and all listed "
+                    f"contributor checks ({len(contributors)}) for this record "
+                    "were skipped; a placeholder or partial record was retained."
+                )
+            elif author_relations.active_contributor_rank is not None:
+                contributor_rank = author_relations.active_contributor_rank
+                later_contributors = len(contributors) - contributor_rank
+                if later_contributors:
+                    contributor_label = (
+                        "contributor"
+                        if later_contributors == 1
+                        else "contributors"
+                    )
+                    skipped_contributors = (
+                        f"Data for this contributor and the {later_contributors} "
+                        f"later {contributor_label} was skipped"
+                    )
+                else:
+                    skipped_contributors = "Data for this contributor was skipped"
+                skipped_content_message = (
+                    "The OpenAlex request did not complete after retries while checking "
+                    f"contributor {contributor_rank}/{len(contributors)} "
+                    f"{author_relations.active_contributor_name!r}. "
+                    f"{skipped_contributors}; already completed data for this "
+                    "record was retained."
+                )
+                skipped_data_message = (
+                    f"OpenAlex API error after retries ({error_type}) while "
+                    f"checking contributor {contributor_rank}/{len(contributors)} "
+                    f"{author_relations.active_contributor_name!r}. "
+                    f"{skipped_contributors}; already completed data for this "
+                    "record was retained."
+                )
+            else:
+                skipped_content_message = (
+                    "The OpenAlex request did not complete after retries during supervisor "
+                    "checking. Skipped unfinished supervisor data; already "
+                    "completed data for this record was retained."
+                )
+                skipped_data_message = (
+                    f"OpenAlex API error after retries ({error_type}) during "
+                    "supervisor checking. Unfinished supervisor data was skipped; "
+                    "already completed data for this record was retained."
+                )
+
+            author_relations.logger.warning(skipped_content_message)
+            author_relations.log_progress(
+                "NETWORK ERROR",
+                skipped_data_message,
+            )
+            author_relations.logger.exception(
+                "ROW NETWORK ERROR: integer_id=%s phd_name=%r",
+                integer_id,
+                phd_name,
+            )
+
+        # Get the DataFrame results.
+        results_df = author_relations.get_results()
+        elapsed = monotonic() - started_at
+        status = (
+            "completed with network error"
+            if author_relations.processing_error
+            else "completed"
+        )
+        author_relations.log_progress(
+            "RECORD END",
+            f"PhD={phd_name!r} | status={status} | elapsed={elapsed:.1f}s",
+        )
+        author_relations.logger.info(
+            "ROW END: integer_id=%s phd_name=%r elapsed=%.1fs error=%s",
+            integer_id,
+            phd_name,
+            elapsed,
+            author_relations.processing_error is not None,
+        )
+
+        return results_df
+    finally:
+        _CURRENT_RECORD.reset(record_context_token)
     
 
 def fetch_author_openalex_names_ids(author: str) -> dict[str, str]:
