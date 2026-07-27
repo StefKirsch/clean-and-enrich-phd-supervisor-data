@@ -25,7 +25,12 @@ from tqdm import tqdm
 from src.unabbreviate_institutions import unabbreviate_institutions
 from src.open_alex_helpers import AuthorRelations, find_phd_and_supervisors_in_row, get_supervisors_openalex_ids
 from src.dataset_config_helpers import read_config, load_dataset
-from src.api_cache_helpers import initialize_request_cache, configure_pyalex_http_timeout
+from src.api_cache_helpers import (
+    OpenAlexDailyLimitError,
+    configure_pyalex_http_timeout,
+    ensure_openalex_budget_available,
+    initialize_request_cache,
+)
 from src.plotters import PhDMatchPlotter, ContributorMatchPlotter
 
 # Initialize tqdm for progress bars
@@ -70,9 +75,27 @@ config.retry_backoff_factor = 1
 configure_pyalex_http_timeout(
     connect_timeout=5,
     read_timeout=20,
-    respect_retry_after=False,
+    respect_retry_after=True,
     max_retry_backoff=10,
 )
+
+# Stop before loading the model or processing rows if OpenAlex cannot accept
+# any new billable requests today. If this lightweight check is unavailable,
+# extraction may continue; runtime 429 handling still protects the output.
+try:
+    rate_limit_status = ensure_openalex_budget_available(config.api_key)
+except OpenAlexDailyLimitError as exc:
+    raise SystemExit(f"Extraction not started: {exc}") from None
+except Exception as exc:
+    print(f"WARNING: OpenAlex budget preflight unavailable: {exc}")
+else:
+    if rate_limit_status:
+        print(
+            "OpenAlex API budget: "
+            f"${rate_limit_status['daily_remaining_usd']} daily and "
+            f"${rate_limit_status['prepaid_remaining_usd']} prepaid remaining; "
+            f"resets at {rate_limit_status['resets_at']}."
+        )
 
 # %% [markdown]
 # ## 2. Load datasets
@@ -186,8 +209,22 @@ model = SentenceTransformer("allenai-specter")
 # set the dict to overwrite the default class attribute specified in src/open_alex_helpers.py
 AuthorRelations.supervisors_in_pilot_dataset = supervisors_in_pilot_dataset
 
+print(
+    r"""
+    ╭──────────────────────────────────────────────╮
+    │  Starting extraction from OpenAlex            │
+    ╰──────────────────────────────────────────────╯
+
+    Listen to the data log:
+    Get-Content .\author_relations.log -Tail 30 -Wait
+
+    Listen to the technical connection log:
+    Get-Content .\extraction.log -Tail 30 -Wait
+    """
+)
 # Process rows explicitly so the progress bar shows which record is active.
 extraction_frames = []
+entries_with_skipped_data = 0
 with tqdm(
     total=len(pubs_high_contrib_df),
     file=sys.stdout,
@@ -201,22 +238,40 @@ with tqdm(
             f"row={row_number}, id={row['integer_id']}, phd={str(row['phd_name'])[:30]}",
             refresh=True,
         )
-        row_result = find_phd_and_supervisors_in_row(row, model)
+        try:
+            row_result = find_phd_and_supervisors_in_row(
+                row,
+                model,
+                row_number=row_number,
+                total_rows=len(pubs_high_contrib_df),
+            )
+        except OpenAlexDailyLimitError as exc:
+            raise SystemExit(
+                "Extraction stopped before writing output: "
+                f"{exc} Completed rows in this run: {row_number - 1}."
+            ) from None
         extraction_frames.append(row_result)
         if row_result["processing_error"].notna().any():
-            tqdm.write(
-                f"OpenAlex request failed for row {row_number} "
-                f"(id={row['integer_id']}, phd={row['phd_name']!r}); "
-                "the row was retained with processing_error set. "
-                "See author_relations.log for details.",
-                file=sys.stdout,
-            )
+            entries_with_skipped_data += 1
         progress.update()
 
 # Concatenate all per-PhD results into one DataFrame.
 extraction_df = pd.concat(extraction_frames, ignore_index=True)
 
 extraction_df.to_csv(output_filename, index=False)
+
+if entries_with_skipped_data:
+    print(
+        f"WARNING: Data was skipped for {entries_with_skipped_data} of "
+        f"{len(pubs_high_contrib_df)} entries because OpenAlex requests "
+        "failed after retries. See author_relations.log for what was skipped "
+        "and extraction.log for technical details."
+    )
+else:
+    print(
+        f"Full extraction completed successfully: all "
+        f"{len(pubs_high_contrib_df)} entries were processed without skipped data."
+    )
 
 extraction_df
 
