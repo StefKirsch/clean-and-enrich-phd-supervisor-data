@@ -17,7 +17,7 @@
 from pyalex import config # to set email_address
 import pandas as pd
 from sentence_transformers import SentenceTransformer
-from os import path
+from os import environ, path
 import matplotlib.pyplot as plt
 import sys
 from tqdm import tqdm
@@ -110,7 +110,8 @@ else:
 
 # %%
 # Read configuration, including information on which subset of the data to use
-data_config = read_config('dataset_config.yaml')
+data_config_path = environ.get("OPENALEX_DATASET_CONFIG", "dataset_config.yaml")
+data_config = read_config(data_config_path)
 
 # Get the file name for the output file
 output_filename = data_config['output_filename'] or None
