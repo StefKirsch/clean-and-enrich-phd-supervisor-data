@@ -20,6 +20,7 @@ scoupus_api_key.csv
 # VS Code & dev files
 settings.json
 **/__pycache__/
+.test-artifacts/
 
 # folder with some tests to keep locally
 experimentation
