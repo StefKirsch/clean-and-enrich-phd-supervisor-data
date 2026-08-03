@@ -1071,10 +1071,19 @@ def remove_duplicate_phd_candidates(extraction_df: pd.DataFrame) -> pd.DataFrame
         )
         result.insert(column_index, "duplicate_phds", duplicate_phds)
 
+    n_removed_candidates = len(duplicate_integer_ids)
+    candidate_label = "candidate" if n_removed_candidates == 1 else "candidates"
+    print(f"Removed {n_removed_candidates} duplicate PhD {candidate_label}.")
+
     return result
 
 
-def find_phd_and_supervisors_in_row(row, model):
+def find_phd_and_supervisors_in_row(
+    row,
+    model,
+    row_number=None,
+    total_rows=None,
+):
     """
     Finds author relations information from a DataFrame row.
 
@@ -1083,6 +1092,9 @@ def find_phd_and_supervisors_in_row(row, model):
 
     Parameters:
         row (pd.Series): A row from the DataFrame containing publication data.
+        model: The model used to validate author matches.
+        row_number (int, optional): The one-based position of the active row.
+        total_rows (int, optional): The total number of rows being processed.
 
     Returns:
         pd.DataFrame: A DataFrame with columns as specified.
