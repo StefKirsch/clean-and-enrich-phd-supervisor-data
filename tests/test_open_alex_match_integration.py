@@ -20,7 +20,10 @@ INTEGRATION_IDS = {2127, 99128, 97227, 414, 38061, 43235}
 DUPLICATE_PAIRS = (
     {2127, 99128},
     {97227, 414},
-    {38061, 43235}, # Complete duplicate other that institution. Is now removed during data cleaning, so it's not in the cleaned publications anymore
+    # Complete duplicate other than institution. It is removed during data
+    # cleaning, so it may not occur in the cleaned publications anymore.
+    {38061, 43235},
+)
 
 
 @unittest.skipUnless(
@@ -168,32 +171,31 @@ class OpenAlexMatchIntegrationTests(unittest.TestCase):
                 ]
             ].to_string(index=False)
 
-            retained_ids = set(result["integer_id"])
+            candidates = result.drop_duplicates("integer_id")
+            retained_ids = set(candidates["integer_id"])
             pairs_with_missing_matches = 0
 
             for duplicate_pair in tested_pairs:
                 retained_from_pair = retained_ids & duplicate_pair
-                if len(retained_from_pair) == 2:
-                    pair_match_by = result.loc[
-                        result["integer_id"].isin(duplicate_pair),
-                        "phd_match_by",
-                    ]
-                    self.assertTrue(
-                        pair_match_by.isna().any(),
-                        f"Expected pair {sorted(duplicate_pair)} to be deduplicated "
-                        "because neither candidate has a missing phd_match_by value.\n"
-                        f"{candidate_summary}",
-                    )
-                    pairs_with_missing_matches += 1
-                    continue
+                pair_has_missing_match = candidates.loc[
+                    candidates["integer_id"].isin(duplicate_pair),
+                    "phd_match_by",
+                ].isna().any()
+                expected_retained_count = 2 if pair_has_missing_match else 1
 
                 self.assertEqual(
                     len(retained_from_pair),
-                    1,
-                    f"Expected one retained candidate from {sorted(duplicate_pair)}, "
-                    "or both candidates when phd_match_by is missing; "
-                    f"found {sorted(retained_from_pair)}.",
+                    expected_retained_count,
+                    f"Expected {expected_retained_count} retained candidates from "
+                    f"{sorted(duplicate_pair)} based on whether phd_match_by is "
+                    f"missing; found {sorted(retained_from_pair)}.\n"
+                    f"{candidate_summary}",
                 )
+
+                if pair_has_missing_match:
+                    pairs_with_missing_matches += 1
+                    continue
+
                 retained_id = retained_from_pair.pop()
                 duplicate_values = (
                     result.loc[
