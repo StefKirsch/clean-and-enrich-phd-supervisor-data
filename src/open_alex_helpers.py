@@ -66,8 +66,20 @@ class AuthorRelations:
     _nontechnical_log_handler = None
     _run_started_logged = False
     
-    def __init__(self, integer_id, phd_name, title, year, institution, contributors, model, years_tolerance=0):
+    def __init__(
+        self,
+        integer_id,
+        phd_name,
+        title,
+        year,
+        institution,
+        contributors,
+        model,
+        years_tolerance=0,
+        thesis_identifier=None,
+    ):
         self.integer_id = integer_id
+        self.thesis_identifier = thesis_identifier
         self.phd_name = phd_name
         self.n_name_search_matches = None # Number of matches for the PhD candidate's name between NARCIS and OpenAlex
         self.title = title # title of the thesis as it appears in Narcis
@@ -772,6 +784,8 @@ class AuthorRelations:
         # The columns our DataFrame should have
         columns = [
             'integer_id',
+            'thesis_identifier',
+            'institution',
             'phd_name', 
             'phd_id', 
             'phd_orcid',
@@ -835,6 +849,8 @@ class AuthorRelations:
 
             result_row = {
                 'integer_id': integer_id,
+                'thesis_identifier': self.thesis_identifier,
+                'institution': self.institution,
                 'phd_name': phd_name,
                 'phd_id': phd_id,
                 'phd_orcid': phd_orcid,
@@ -877,6 +893,8 @@ class AuthorRelations:
             # Create a single row with the data we have and the others as None
             result_row = {col: None for col in columns}
             result_row['integer_id'] = integer_id
+            result_row['thesis_identifier'] = self.thesis_identifier
+            result_row['institution'] = self.institution
             result_row['phd_name'] = phd_name
             result_row['phd_id'] = phd_id
             result_row['phd_orcid'] = phd_orcid
@@ -1018,7 +1036,8 @@ def remove_duplicate_phd_candidates(extraction_df: pd.DataFrame) -> pd.DataFrame
     Prefer ORCIDs for identifying candidates and use OpenAlex IDs when no ORCID
     is available. For duplicates, keep the integer ID with the most confirmed
     contributors. Ties are resolved by keeping the first integer ID. Add all
-    duplicate PhD names and OpenAlex IDs to the retained candidate for diagnostics.
+    duplicate source-record metadata, PhD names, and OpenAlex IDs to the
+    retained candidate for diagnostics.
     """
     candidates = (
         extraction_df.drop_duplicates(subset="integer_id").copy().reset_index(drop=True)
@@ -1046,7 +1065,15 @@ def remove_duplicate_phd_candidates(extraction_df: pd.DataFrame) -> pd.DataFrame
 
         duplicate_integer_ids.extend(removed_candidates["integer_id"])
         duplicate_phds_by_integer_id[kept_integer_id] = (
-            ordered_candidates[["phd_name", "phd_id"]].to_dict("records")
+            ordered_candidates[
+                [
+                    "integer_id",
+                    "thesis_identifier",
+                    "institution",
+                    "phd_name",
+                    "phd_id",
+                ]
+            ].to_dict("records")
         )
 
     result = extraction_df[
@@ -1101,6 +1128,7 @@ def find_phd_and_supervisors_in_row(
     """
     # Extract necessary fields
     integer_id = row['integer_id']
+    thesis_identifier = row['thesis_identifier']
     phd_name = row['phd_name']
     title = row['title']
     year = int(row['year'])
@@ -1130,6 +1158,7 @@ def find_phd_and_supervisors_in_row(
             contributors=contributors,
             model=model,
             years_tolerance=-4, # cf. issue #19
+            thesis_identifier=thesis_identifier,
         )
 
         started_at = monotonic()
