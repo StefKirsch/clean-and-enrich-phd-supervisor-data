@@ -11,13 +11,22 @@ def read_config(config_path: str) -> dict:
     
     Returns:
         dict: Parsed configuration.
+
+    Raises:
+        ValueError: Gold-standard mode has no nonempty output filename.
     """
     print(f"Reading configuration from {config_path}...")
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
         
     if config.get('use_sample_for_gold_standard', None):
-        config.output_filename = config.get('output_filename_gold_standard', None)
+        output_filename = config.get('output_filename_gold_standard')
+        if not isinstance(output_filename, str) or not output_filename.strip():
+            raise ValueError(
+                "output_filename_gold_standard must be a nonempty path "
+                "when use_sample_for_gold_standard is enabled."
+            )
+        config['output_filename'] = output_filename
         
     return config
 
