@@ -1038,13 +1038,15 @@ def compute_and_sort_works_by_title_similarities(works: pd.DataFrame, reference_
 
 def remove_duplicate_phd_candidates(extraction_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Remove duplicate PhD candidates with different integer IDs.
+    Remove confirmed duplicate PhD candidates with different integer IDs.
 
-    Prefer ORCIDs for identifying candidates and use OpenAlex IDs when no ORCID
-    is available. For duplicates, keep the integer ID with the most confirmed
-    contributors. Ties are resolved by keeping the first integer ID. Add all
-    duplicate source-record metadata, PhD names, and OpenAlex IDs to the
-    retained candidate for diagnostics.
+    Only candidates with a nonempty phd_match_by value enter deduplication;
+    unconfirmed source records retain all their contributor rows even if they
+    share a tentative identity with another record. Prefer ORCIDs for identifying
+    confirmed candidates and use OpenAlex IDs when no ORCID is available. For
+    duplicates, keep the integer ID with the most confirmed contributors. Ties
+    are resolved by keeping the first integer ID. Add all duplicate source-record
+    metadata, PhD names, and OpenAlex IDs to the retained candidate for diagnostics.
     """
     candidates = (
         extraction_df.drop_duplicates(subset="integer_id").copy().reset_index(drop=True)
@@ -1056,7 +1058,8 @@ def remove_duplicate_phd_candidates(extraction_df: pd.DataFrame) -> pd.DataFrame
         extraction_df.groupby("integer_id", sort=False)["contributor_confirmed"].sum()
     )
 
-    candidates_with_id = candidates[candidates["duplicate_id"].notna()]
+    confirmed = candidates["phd_match_by"].fillna("").astype(str).str.strip().ne("")
+    candidates_with_id = candidates[confirmed & candidates["duplicate_id"].notna()]
     duplicate_integer_ids = []
     duplicate_phds_by_integer_id = {}
 
