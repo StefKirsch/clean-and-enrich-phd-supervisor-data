@@ -85,6 +85,7 @@ notebook==7.3.2
 notebook_shim==0.2.4
 num2words==0.5.14
 numpy==2.2.3
+openpyxl==3.1.5
 overrides==7.7.0
 packaging==24.2
 pandas==2.2.3
@@ -107,8 +108,8 @@ pyparsing==3.2.1
 python-dateutil==2.9.0.post0
 python-json-logger==3.3.0
 pytz==2025.1
-pywin32==309
-pywinpty==2.0.15
+pywin32==309; sys_platform == "win32"
+pywinpty==2.0.15; sys_platform == "win32"
 PyYAML==6.0.2
 pyzmq==26.3.0
 referencing==0.36.2
