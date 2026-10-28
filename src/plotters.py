@@ -1,7 +1,49 @@
 from __future__ import annotations
+import ast
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+
+def _as_bool(value) -> bool:
+    """Interpret CSV flags without treating the string 'False' as truthy."""
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "1.0"}
+    return pd.notna(value) and bool(value)
+
+
+def _as_list(value) -> list:
+    """Restore collections written by DataFrame.to_csv using safe literal parsing."""
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return []
+        try:
+            value = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            return [value]
+    if isinstance(value, (list, tuple, set, np.ndarray)):
+        return list(value)
+    return [] if pd.isna(value) else [value]
+
+
+def _normalize_plot_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Give native extraction rows and CSV-loaded rows the same chart input types."""
+    result = df.copy()
+    if "phd_match_by" in result:
+        result["phd_match_by"] = result["phd_match_by"].fillna("").astype(str).str.strip()
+    if "phd_id" in result:
+        result["phd_id"] = result["phd_id"].replace(r"^\s*$", None, regex=True)
+    for column in ("affiliation_match", "near_exact_match", "exact_match", "contributor_confirmed"):
+        if column in result:
+            result[column] = result[column].map(_as_bool).astype(bool)
+    for column in ("name_matches_open_alex", "contributor_name", "contributor_id", "contributor_orcid"):
+        if column in result:
+            result[column] = result[column].map(_as_list)
+    for column in ("n_shared_pubs", "n_shared_inst_grad"):
+        if column in result:
+            result[column] = pd.to_numeric(result[column], errors="coerce").fillna(0)
+    return result
 
 
 class PhDMatchPlotter:
@@ -56,7 +98,7 @@ class PhDMatchPlotter:
             missing = set(self._REQUIRED_COLS) - set(df.columns)
             raise ValueError(f"DataFrame missing columns: {missing}")
 
-        self.df = df.copy()
+        self.df = _normalize_plot_frame(df)
         self.intra_gap = intra_gap
         self.inter_gap = inter_gap
         self.bar_width = bar_width
@@ -124,17 +166,6 @@ class PhDMatchPlotter:
                 .drop_duplicates(subset=["phd_name", "phd_id"]) # unique rows per PhD. With this subset, we can distinguish between PhDs with the same name, but different ids (if we found them) 
                 .copy()
         )
-        self.df_unique["affiliation_match"] = (
-            self.df_unique["affiliation_match"]
-                .fillna(False)
-                .astype(bool)
-        )
-        self.df_unique["exact_match"] = (
-            self.df_unique["exact_match"]
-                .fillna(False)
-                .astype(bool)
-        )
-        
         # categorize
         self.df_unique["match_category"] = self.df_unique.apply(
             self._determine_category_row, axis=1
@@ -144,7 +175,7 @@ class PhDMatchPlotter:
         self.match_counts = (
             self.df_unique["match_category"]
             .value_counts()
-            .reindex(self._BAR_CATEGORIES)
+            .reindex(self._BAR_CATEGORIES, fill_value=0)
         )
         self.confirmed_categories = self._BAR_CATEGORIES[2:]
 
@@ -197,15 +228,20 @@ class ContributorMatchPlotter:
     contributor-matching confirmation chart (one row = one potential
     contributor–PhD link).
 
+    Counts and colors use the exported ``contributor_confirmed`` decision.
+    Stacked bars show confirmation separately from publication and shared-
+    affiliation evidence; ``same_grad_inst`` is not a confirmation rule.
+
     Parameters
     ----------
     df : pd.DataFrame
         Extraction frame; must contain the columns listed in
-        `_REQUIRED_COLS`.
+        `_REQUIRED_COLS`. PhDs are grouped by source `integer_id` when
+        available, otherwise by `phd_id`.
     intra_gap : float, default 0.6
         Horizontal space between bars that belong to the *same* group.
     inter_gap : float, default 1.2
-        Horizontal space between the two groups (confirmed / not confirmed).
+        Horizontal space between missing-match and evidence categories.
     bar_width : float, default 0.5
         Thickness of each bar.
     color_confirmed : str, default "tab:orange"
@@ -216,23 +252,22 @@ class ContributorMatchPlotter:
 
     _REQUIRED_COLS: tuple[str, ...] = (
         "phd_id",
-        "phd_name",
-        "contributor_id",
+        "phd_match_by",
         "contributor_name",
+        "name_matches_open_alex",
+        "contributor_confirmed",
         "n_shared_pubs",
-        "same_grad_inst",
+        "n_shared_inst_grad",
     )
 
     _BAR_CATEGORIES: list[str] = [
-        "PhD not found in Open Alex",
-        "Contributor not found in Open Alex",
-        "No shared publications or affiliation at graduation",
-        "Shared affiliation at graduation only",
+        "PhD not confirmed",
+        "No contributor name match in OpenAlex",
+        "No shared publications or affiliation in target years",
+        "Shared affiliation in target years only",
         "Shared publications only",
-        "Shared publications and affiliation at graduation",
-        "Other",
+        "Shared publications and affiliation in target years",
     ]
-    _FIRST_CONFIRMED = 4  # bars 0-3  = not confirmed, 4-5 = confirmed
 
     # -----------------------------------------------------------------
     def __init__(
@@ -249,7 +284,7 @@ class ContributorMatchPlotter:
             missing = set(self._REQUIRED_COLS) - set(df.columns)
             raise ValueError(f"DataFrame missing columns: {missing}")
 
-        self.df = df.copy()
+        self.df = _normalize_plot_frame(df)
         self.intra_gap = intra_gap
         self.inter_gap = inter_gap
         self.bar_width = bar_width
@@ -267,7 +302,7 @@ class ContributorMatchPlotter:
 
     @property
     def n_confirmed_contributors(self) -> int:
-        return self.contrib_df["match_category"].isin(self.confirmed_categories).sum()
+        return self.contrib_df["contributor_confirmed"].sum()
 
     @property
     def n_phds_with_confirmed(self) -> int:
@@ -283,14 +318,22 @@ class ContributorMatchPlotter:
         else:
             fig = ax.figure
 
-        bars = ax.bar(
+        ax.bar(
             self.x_pos,
-            self.match_counts.values,
+            self.unconfirmed_counts.values,
             width=self.bar_width,
-            color=self.colors,
+            color=self.color_not_confirmed,
             edgecolor="black",
         )
-        ax.bar_label(bars, label_type="edge")
+        bars = ax.bar(
+            self.x_pos,
+            self.confirmed_counts.values,
+            bottom=self.unconfirmed_counts.values,
+            width=self.bar_width,
+            color=self.color_confirmed,
+            edgecolor="black",
+        )
+        ax.bar_label(bars, labels=self.match_counts.values, label_type="edge")
 
         ax.set_xticks(self.x_pos, self._BAR_CATEGORIES, rotation=90)
         ax.set_ylabel("Number of contributors")
@@ -324,29 +367,22 @@ class ContributorMatchPlotter:
     # -----------------------------------------------------------------
     # internals
     # -----------------------------------------------------------------
-    @staticmethod
-    def _missing_or_empty(val) -> bool:
-        """True if val is NaN / None or an empty iterable/ndarray."""
-        if val is None or (isinstance(val, float) and pd.isna(val)):
-            return True
-        if isinstance(val, (list, tuple, set, np.ndarray)):
-            return len(val) == 0
-        return False
-
     def _determine_category_row(self, row: pd.Series) -> str:
-        if self._missing_or_empty(row["phd_match_by"]):
-            return "PhD not found in Open Alex"
+        if not row["phd_match_by"]:
+            return "PhD not confirmed"
         if not row["name_matches_open_alex"]:
-            return "Contributor not found in Open Alex"
-        if not row["n_shared_pubs"] and not row["same_grad_inst"]:
-            return "No shared publications or affiliation at graduation"
-        if not row["n_shared_pubs"] and row["same_grad_inst"]:
-            return "Shared affiliation at graduation only"
-        if row["n_shared_pubs"] and not row["same_grad_inst"]:
+            return "No contributor name match in OpenAlex"
+        has_publications = pd.notna(row["n_shared_pubs"]) and row["n_shared_pubs"] > 0
+        has_affiliation = (
+            pd.notna(row["n_shared_inst_grad"]) and row["n_shared_inst_grad"] > 0
+        )
+        if not has_publications and not has_affiliation:
+            return "No shared publications or affiliation in target years"
+        if not has_publications and has_affiliation:
+            return "Shared affiliation in target years only"
+        if has_publications and not has_affiliation:
             return "Shared publications only"
-        if row["n_shared_pubs"] and row["same_grad_inst"]:
-            return "Shared publications and affiliation at graduation"
-        return "Other"
+        return "Shared publications and affiliation in target years"
 
     def _make_positions(self) -> list[float]:
         """Custom x positions: narrow gaps within a group, wider gap between."""
@@ -354,27 +390,32 @@ class ContributorMatchPlotter:
         x = 0.0
         for idx in range(len(self._BAR_CATEGORIES)):
             x_vals.append(x)
-            x += self.inter_gap if idx == self._FIRST_CONFIRMED - 1 else self.intra_gap
+            x += self.inter_gap if idx == 1 else self.intra_gap
         return x_vals
 
     def _prepare(self) -> None:
         # -----------------------------------------------------------------
         # 1) categorise each row
         # -----------------------------------------------------------------
-        self.df["match_category"] = self.df.apply(self._determine_category_row, axis=1)
+        self.df["match_category"] = pd.Series(
+            [self._determine_category_row(row) for _, row in self.df.iterrows()],
+            index=self.df.index, dtype=object,
+        )
 
         # -----------------------------------------------------------------
         # 2) contributor-level frame
         # -----------------------------------------------------------------
-        self.contrib_df = self.df[["phd_id", "match_category", "contributor_name"]]
+        phd_key = "integer_id" if "integer_id" in self.df.columns else "phd_id"
+        self.contrib_df = self.df[list(dict.fromkeys([
+            phd_key, "phd_id", "match_category", "contributor_name", "contributor_confirmed",
+        ]))].copy()
 
         # -----------------------------------------------------------------
         # 3) flags per PhD: any confirmed contributor?
         # -----------------------------------------------------------------
-        self.confirmed_categories = self._BAR_CATEGORIES[self._FIRST_CONFIRMED:]
-        row_is_confirmed = self.contrib_df["match_category"].isin(self.confirmed_categories)
+        row_is_confirmed = self.contrib_df["contributor_confirmed"]
         self.phd_flags = (
-            row_is_confirmed.groupby(self.contrib_df["phd_id"]).any()
+            row_is_confirmed.groupby(self.contrib_df[phd_key], dropna=False).any()
             .rename("has_confirmed_contributor")
             .reset_index()
         )
@@ -382,20 +423,21 @@ class ContributorMatchPlotter:
         # -----------------------------------------------------------------
         # 4) bar heights
         # -----------------------------------------------------------------
-        self.match_counts = (
-            self.contrib_df["match_category"]
+        self.confirmed_counts = (
+            self.contrib_df.loc[row_is_confirmed, "match_category"]
             .value_counts()
-            .reindex(self._BAR_CATEGORIES)
-            .fillna(0)
+            .reindex(self._BAR_CATEGORIES, fill_value=0)
         )
+        self.unconfirmed_counts = (
+            self.contrib_df.loc[~row_is_confirmed, "match_category"]
+            .value_counts()
+            .reindex(self._BAR_CATEGORIES, fill_value=0)
+        )
+        self.match_counts = self.confirmed_counts + self.unconfirmed_counts
 
         # -----------------------------------------------------------------
-        # 5) colours & x-positions
+        # 5) x-positions (confirmation colors are applied to each stack)
         # -----------------------------------------------------------------
-        self.colors = (
-            [self.color_not_confirmed] * self._FIRST_CONFIRMED +
-            [self.color_confirmed] * (len(self._BAR_CATEGORIES) - self._FIRST_CONFIRMED)
-        )
         self.x_pos = self._make_positions()
 
 
