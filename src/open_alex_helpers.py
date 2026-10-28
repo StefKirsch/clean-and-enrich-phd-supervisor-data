@@ -921,17 +921,21 @@ class AuthorRelations:
 
 def get_authored_works(author_id: str, author_name: str) -> pd.DataFrame:
     """
-    Returns a DataFrame containing the works authored by the candidate.
+    Return at most 25 works from the author's first OpenAlex results page.
+
+    This intentional cap bounds each publication lookup. Thesis title matching
+    and shared-publication calculations use only these works and may miss
+    relevant publications outside this page.
     """ 
     
     properties_to_select = ["id", "title", "doi", "publication_year", "type"]
     
-    # Do the API call
+    # Request a single page explicitly to keep publication lookups bounded.
     works = pd.DataFrame(
         Works()
         .filter(author={"id": author_id})
         .select(properties_to_select)
-        .get(),
+        .get(page=1, per_page=25),
         columns=properties_to_select # make sure the dataframe has these columns, even when it's empty
         )
     
