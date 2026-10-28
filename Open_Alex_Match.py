@@ -140,6 +140,7 @@ pubs_unabbrev_df
 # PhD candidates with 4 or more supervisors (for information).
 
 # %%
+# We are flagging PhDs that have more than 4 contributors. For diagnostics only.
 min_n_contributors_to_flag = 4
 contributor_cols = pubs_unabbrev_df.filter(like="contributor_").columns
 

@@ -509,6 +509,9 @@ def name_sanity_check(name_a: str, name_b: str) -> bool:
     return first_given_initial_match(name_a, name_b) and surname_word_match(name_a, name_b)
 
 def pivot_per_contributor_to_per_phd(pairs: pd.DataFrame) -> pd.DataFrame:
+    # Preserve original rank order before compacting gaps left by filtering.
+    pairs = pairs.sort_values("contributor_order", kind="stable")
+
     # Group by publication
     aggregated = pairs.groupby(
         [
