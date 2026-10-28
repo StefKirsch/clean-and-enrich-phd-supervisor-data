@@ -25,7 +25,7 @@ institution_translation = {
     'ul': 'Leiden University', # https://api.openalex.org/institutions?search=Universiteit%20Leiden
     'uls': 'Utrecht University', # this abbreviation ocurred only for one thesis. I looked it up and it was written with UU.
     'um': 'Maastricht University', # https://api.openalex.org/institutions?search=Universiteit%20Maastricht
-    'umcu': 'Maastricht University Medical Centre', # https://api.openalex.org/institutions?search=Maastricht%20University%20Medical%20Centre
+    'umcu': 'University Medical Center Utrecht', # https://api.openalex.org/institutions/I3018483916
     'ut': 'University of Twente', # https://api.openalex.org/institutions?search=Universiteit%20Twente 
     'uu': 'Utrecht University',
     'uvapub': 'University of Amsterdam',
