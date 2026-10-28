@@ -526,12 +526,12 @@ class AuthorRelations:
             
             return set()
             
-    def _init_supervisor_record(self, contributor_name, rank, openalex_candidates=None):
+    def _init_supervisor_record(self, contributor_name, rank):
         return {
             'contributor_name_narcis': contributor_name,
             'name_matches_open_alex': [],
             'contributor_rank': rank,
-            'supervisor': openalex_candidates or [],
+            'supervisor': [],
             'supervisor_confirmed': False,
             'same_grad_inst': False,
             'n_shared_inst_grad': 0,
@@ -547,9 +547,10 @@ class AuthorRelations:
         """
         Based on relationships between `self.phd_candidate` and contributors collect metadata that indicates supervision. 
         
-        We look up contributors in OpenAlex by name search. Then we check if ANY of the search matches fulfill
-        the criteria we define to be a potential supervisor. This implicitly merges all the search results for each contributor name.
-        For mote info, see the comment below.
+        Search OpenAlex by contributor name and retain candidates that pass the name sanity check
+        and share an affiliation with the PhD in the target years, subject to the Dutch-affiliation check.
+        Merge identities and publication metadata only across these eligible candidates.
+        'name_matches_open_alex' separately records all candidates passing the name check.
         
         Every contributor yields a results dictionary, even if not confirmed. Unmatched contributors get placeholder values.
         The following metadata will be collected per contributor:
@@ -641,7 +642,6 @@ class AuthorRelations:
             supervisor_data = self._init_supervisor_record(
                 contributor_name=contributor_name,
                 rank=contributor_rank,
-                openalex_candidates=openalex_candidates,
             )
 
             if not openalex_candidates:
@@ -656,10 +656,11 @@ class AuthorRelations:
                 )
                 continue
 
-            # Identify candidates with either shared institution or shared publications
+            # Identify candidates with a plausible name and a shared affiliation.
             
             # Create placeholder data that we are also using if we don't confirm the supervisor
             name_matches_open_alex = [] # Name match with OpenAlex
+            matched_candidates = []
             shared_pub_union = set()
             all_shared_affils = set()
             coauthorship_flag = False
@@ -667,13 +668,8 @@ class AuthorRelations:
             pilot_flag = False
             thesis_coauthor_flag = False
 
-            # Open Alex has a lot partial duplicates of authors, especially for ones that are
-            # later in their career.
-            # We thus decided to implicitly merge all of the matches, i.e. candidates that we find with
-            # based on the Open Alex name search and that have te correct affiliation in the target years.
-            # This means that we set the boolean flags to True if they apply to (at least) ONE of the
-            # matched potential contributors and that we collect the shared publication between the
-            # PhD candidate and ALL of the matched potential contributors. 
+            # OpenAlex may split one author across multiple profiles. Merge only profiles
+            # that pass both checks so homonyms cannot contribute identities or metadata.
             for candidate in openalex_candidates:
                 
                 # Some basic sanity checking if the two names could realistically refer to the same person
@@ -688,6 +684,14 @@ class AuthorRelations:
                 )
                 shared_affils = phd_affiliations_at_graduation.intersection(cand_affils)
 
+                if not shared_affils:
+                    self.logger.debug(
+                        f"Skipping name match '{candidate['display_name']}': "
+                        "no shared affiliation in the target years."
+                    )
+                    continue
+
+                matched_candidates.append(candidate)
                 all_shared_affils.update(shared_affils)
 
                 # Publications
@@ -731,7 +735,7 @@ class AuthorRelations:
             # Fill aggregated values
             supervisor_data.update({
                 "name_matches_open_alex":     name_matches_open_alex,
-                "supervisor":                 openalex_candidates,
+                "supervisor":                 matched_candidates,
                 "n_shared_inst_grad":         len(all_shared_affils),
                 "same_grad_inst":             same_grad_inst_flag,
                 "is_sup_in_pilot_dataset":    pilot_flag,
@@ -773,12 +777,11 @@ class AuthorRelations:
         """
         Return a DataFrame with the results of the extraction.
 
-        If no PhD candidate was found in OpenAlex, return a single-row DataFrame
-        with only 'phd_name' filled and all other columns as None.
-
-        If a PhD candidate was found but no supervisors were confirmed,
-        also return a single-row DataFrame with 'phd_name', 'phd_id', 'phd_orcid', 'phd_match_by' filled
-        and all supervisor-related columns as NaN.
+        Return one row per source contributor, retaining the NARCIS name and rank
+        even when no supervisor is confirmed. Supervisor identity lists contain
+        only eligible matched profiles and are empty for unmatched contributors.
+        If there are no contributor records, return one row with the available
+        source and PhD data and empty supervisor-related fields.
         """
         
         # The columns our DataFrame should have
