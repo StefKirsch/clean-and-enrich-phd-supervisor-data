@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-We recommend installing Python via [Miniconda](https://docs.conda.io/en/latest/miniconda.html) for a minimal setup. This ensures an isolated and controlled Python environment. If you already have Python installed, you can skip this step.
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/). It automatically downloads Python 3.12 if needed and manages the project environment and dependencies.
 
 ## Setup
 
@@ -12,59 +12,20 @@ We recommend installing Python via [Miniconda](https://docs.conda.io/en/latest/m
 
 3. **Navigate to the project directory** in the terminal or command prompt.
 
-4. **Install the dependencies**  
-   You have two options:
-
-### Simple Installation (No Virtual Environment)
-   If you do not wish to use a virtual environment, you can install the dependencies directly:
+4. **Install Python and the dependencies:**
    
    ```bash
-   pip install -r requirements.txt
+   uv sync --locked
    ```
 
-   This will install all the required packages directly into your current Python environment.
-
-### Recommended Workflow (Using a Virtual Environment)
-   It’s recommended to use `venv` to create an isolated Python environment for the project.
-
-   a) **Create a Virtual Environment:**
-
-   Run the following command to create a virtual environment in the project directory:
-   
-   ```bash
-   python -m venv venv
-   ```
-
-   This will create a `venv` directory in your project.
-
-   b) **Activate the Virtual Environment:**
-
-   - On Windows:
-   
-     ```bash
-     venv\Scripts\activate
-     ```
-
-   - On macOS/Linux:
-   
-     ```bash
-     source venv/bin/activate
-     ```
-
-   c) **Install Dependencies:**
-
-   With the virtual environment activated, install the required dependencies:
-   
-   ```bash
-   pip install -r requirements.txt
-   ```
+   This creates `.venv` using `pyproject.toml` and `uv.lock`. No environment activation is needed.
 
 5. **Run Jupyter Notebook:**
 
    After setting up the environment and installing dependencies, start the Jupyter notebook:
    
    ```bash
-   jupyter notebook
+   uv run jupyter notebook
    ```
    
 6. **(Optional) Use the polite pool or OpenAlex Premium**
@@ -75,9 +36,11 @@ We recommend installing Python via [Miniconda](https://docs.conda.io/en/latest/m
     mail@example.com
     ```
 
-7. **Run the Notebooks in this order:**
+7. **Run the cleaning notebook, then the matching script:**
    
-   1. clean_data
-   2. Open_Alex_Match
+   1. Open and run `clean_data.ipynb` in Jupyter.
+   2. From the project directory, run `uv run Open_Alex_Match.py`.
+
+   Run other Python scripts with `uv run path/to/script.py`.
 
 

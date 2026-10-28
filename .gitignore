@@ -21,6 +21,7 @@ scoupus_api_key.csv
 settings.json
 **/__pycache__/
 .test-artifacts/
+.venv/
 
 # folder with some tests to keep locally
 experimentation
