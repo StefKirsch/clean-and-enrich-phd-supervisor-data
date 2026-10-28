@@ -43,4 +43,14 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/). It automa
 
    Run other Python scripts with `uv run path/to/script.py`.
 
+## Reducing OpenAlex API costs
 
+The matching workflow reduces API usage through the following choices:
+
+- PhD matching checks the first 10 author-name results and retrieves at most 100 works per candidate, without fetching additional pages. OpenAlex charges per request, so increasing the works page from 25 to 100 results adds no API usage cost ([pricing](https://help.openalex.org/access/example-costs/), [page limits](https://help.openalex.org/api/paging/)).
+- Shared-publication and thesis-coauthor checks use the authorships already returned with the selected PhD's works, avoiding separate publication queries for each contributor.
+- Candidates must pass the name check before their works are fetched. Contributor searches are skipped when the PhD is unconfirmed or has no affiliation in the target years.
+- API responses are cached locally, and an existing pilot-supervisor lookup is loaded from disk to avoid repeating requests.
+- Sampling, contributor selection, and gold-standard mode in [dataset_config.yaml](dataset_config.yaml) allow smaller runs before processing the full dataset.
+
+Limiting retrieval reduces requests but can miss matching evidence outside the fetched works and authorships.

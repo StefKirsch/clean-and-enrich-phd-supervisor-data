@@ -284,7 +284,8 @@ class AuthorRelations:
     def search_phd_candidate(self):
         """
         Search for the PhD candidate by name and validate by name match, fuzzy match of works and institution.
-        Collect all candidates into a list, then decide which best matches criteria.
+        Evaluate only the first 10 OpenAlex name-search results, in API order,
+        then decide which best matches criteria.
 
         Now we also assign a 'match_score' to each candidate:
             match_score = n_close_matches + (50 if exact_match) + (20 if near_exact_match) + (20 if affiliation_match)
@@ -299,7 +300,7 @@ class AuthorRelations:
         self.logger.info(f"Searching for PhD candidate: {self.phd_name}")
         
         # Search for candidates by PhD name
-        candidates = Authors().search(self.phd_name).get()
+        candidates = Authors().search(self.phd_name).get(page=1, per_page=10)
         self.logger.debug(f"Found: {len(candidates)} people who are potential matches.")
 
         # If no candidates are found, log and return
@@ -554,6 +555,8 @@ class AuthorRelations:
         and share an affiliation with the PhD in the target years, subject to the Dutch-affiliation check.
         Merge identities and publication metadata only across these eligible candidates.
         'name_matches_open_alex' separately records all candidates passing the name check.
+        Shared publications and thesis coauthorship use the authorships already
+        returned with the PhD's works; no contributor works queries are needed.
         
         Every contributor yields a results dictionary, even if not confirmed. Unmatched contributors get placeholder values.
         The following metadata will be collected per contributor:
@@ -623,11 +626,17 @@ class AuthorRelations:
         self.logger.info("Searching for potential supervisors among contributors.")
 
         self.potential_supervisors = []
-        # Missing or blank DOIs cannot establish that two works are shared.
-        phd_dois = {
-            doi for doi in self.phd_publications["doi"]
-            if isinstance(doi, str) and doi.strip()
-        }
+        # Index the fetched PhD works once for all contributors. OpenAlex returns
+        # at most 100 authorships per work; accept that limit without extra calls.
+        works_by_coauthor = {}
+        for work in self.phd_publications.to_dict("records"):
+            authorships = work.get("authorships")
+            if not isinstance(authorships, list):
+                continue
+            for authorship in authorships:
+                coauthor_id = (authorship.get("author") or {}).get("id")
+                if coauthor_id:
+                    works_by_coauthor.setdefault(coauthor_id, []).append(work)
 
         for idx, contributor_name in enumerate(self.contributors):
             contributor_rank = idx + 1
@@ -701,21 +710,20 @@ class AuthorRelations:
                 matched_candidates.append(candidate)
                 all_shared_affils.update(shared_affils)
 
-                # Publications
-                works = get_authored_works(
-                    author_id=candidate['id'], author_name=candidate['display_name']
-                )
-                contrib_dois = {
-                    doi for doi in works['doi']
-                    if isinstance(doi, str) and doi.strip()
+                # Match by OpenAlex author ID within the PhD's fetched works.
+                shared_works = works_by_coauthor.get(candidate['id'], [])
+                shared_pubs = {
+                    work['doi'] for work in shared_works
+                    if isinstance(work['doi'], str) and work['doi'].strip()
                 }
-                shared_pubs = phd_dois.intersection(contrib_dois)
                 shared_pub_union.update(shared_pubs)
 
                 if len(shared_pub_union) >= self.n_shared_pubs_min:
                     coauthorship_flag = True
 
-                if self.thesis_id is not None and self.thesis_id in works['work_id'].tolist():
+                if self.thesis_id is not None and any(
+                    work['work_id'] == self.thesis_id for work in shared_works
+                ):
                     thesis_coauthor_flag = True
 
                 if self.institution in shared_affils:
@@ -934,21 +942,23 @@ class AuthorRelations:
 
 def get_authored_works(author_id: str, author_name: str) -> pd.DataFrame:
     """
-    Return at most 25 works from the author's first OpenAlex results page.
+    Return at most 100 works from the author's first OpenAlex results page.
 
     This intentional cap bounds each publication lookup. Thesis title matching
     and shared-publication calculations use only these works and may miss
-    relevant publications outside this page.
+    relevant publications outside this page. Include authorships so contributor
+    coauthorship can be checked without fetching contributors' works. OpenAlex
+    returns only the first 100 authorships per work; no further lookups are made.
     """ 
     
-    properties_to_select = ["id", "title", "doi", "publication_year", "type"]
+    properties_to_select = ["id", "title", "doi", "publication_year", "type", "authorships"]
     
     # Request a single page explicitly to keep publication lookups bounded.
     works = pd.DataFrame(
         Works()
         .filter(author={"id": author_id})
         .select(properties_to_select)
-        .get(page=1, per_page=25),
+        .get(page=1, per_page=100),
         columns=properties_to_select # make sure the dataframe has these columns, even when it's empty
         )
     
