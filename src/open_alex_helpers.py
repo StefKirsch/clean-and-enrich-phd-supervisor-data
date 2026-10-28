@@ -83,7 +83,7 @@ class AuthorRelations:
         self.phd_name = phd_name
         self.n_name_search_matches = None # Number of matches for the PhD candidate's name between NARCIS and OpenAlex
         self.title = title # title of the thesis as it appears in Narcis
-        self.title_open_alex = None # title of the thesis as it appears in OpenAlex
+        self.title_open_alex = None # candidate work titles in the target years, ordered by similarity
         self.title_similarities = None # similarities between Narcis title and fuzzily matched OpenAlex titles
         self.max_title_similarity = None # highest similarity between Narcis title and fuzzily matched OpenAlex titles
         self.n_close_matches = None # number of fuzzily matched OpenAlex titles
@@ -290,6 +290,10 @@ class AuthorRelations:
             match_score = n_close_matches + (50 if exact_match) + (20 if near_exact_match) + (20 if affiliation_match)
         Then we pick the candidate with the highest match_score.
 
+        Store the OpenAlex work ID of that candidate's highest-similarity work
+        in the target years if it meets similarity_cutoff; otherwise leave
+        thesis_id unset. Keep all target-year titles for matching diagnostics.
+
         Log a table representation of the sorted DataFrame.
         """
         self.logger.info(f"Searching for PhD candidate: {self.phd_name}")
@@ -353,12 +357,19 @@ class AuthorRelations:
             close_matches = [val for val in title_similarities_in_target_years if val >= self.similarity_cutoff]
             n_close_matches = len(close_matches)
 
+            # Works are sorted by descending title similarity. Select a single
+            # qualifying row in the target years and retain its OpenAlex ID.
+            thesis_matches = df_works_candidate_in_target_years.loc[
+                df_works_candidate_in_target_years["similarity"] >= self.similarity_cutoff
+            ]
+            thesis_id = thesis_matches.iloc[0]["work_id"] if not thesis_matches.empty else None
 
             candidates_info.append({
                 'candidate': candidate,
                 'candidate_name': candidate['display_name'],
                 'candidate_id': candidate['id'],
                 'candidate_orcid': candidate['orcid'],
+                'thesis_id': thesis_id,
                 'ids_open_alex': work_ids_open_alex_in_target_years,
                 'titles_open_alex': titles_open_alex_in_target_years,
                 'title_similarities': title_similarities_in_target_years,
@@ -434,15 +445,7 @@ class AuthorRelations:
         self.affiliation_match = best_candidate_info['affiliation_match']
         self.phd_match_score = best_candidate_info['match_score']
         
-        # Get the thesis id (if present)
-        if "title" in self.phd_publications.columns:
-            self.thesis_id = (
-                self.phd_publications
-                .query("title == @self.title_open_alex")
-                .first_valid_index()
-            )
-        else:
-            self.thesis_id = None
+        self.thesis_id = best_candidate_info['thesis_id']
 
         self.logger.info(
             f"PhD candidate confirmed by {self.phd_match_by}: {self.phd_candidate['display_name']}"
@@ -705,7 +708,7 @@ class AuthorRelations:
                 if len(shared_pub_union) >= self.n_shared_pubs_min:
                     coauthorship_flag = True
 
-                if self.thesis_id in works['work_id'].tolist():
+                if self.thesis_id is not None and self.thesis_id in works['work_id'].tolist():
                     thesis_coauthor_flag = True
 
                 if self.institution in shared_affils:
