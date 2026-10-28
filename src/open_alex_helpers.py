@@ -565,8 +565,8 @@ class AuthorRelations:
         'n_shared_inst_grad': Number of institutions PhD candidate and contributors share at graduation -> int
         'is_sup_in_pilot_dataset': True if any candidate is in pilot dataset -> bool
         'sup_match_by': Description of matching criterion -> str
-        'n_shared_pubs': Total number of shared publication DOIs -> int
-        'shared_pubs': List of shared publication DOIs -> list
+        'n_shared_pubs': Number of distinct shared nonempty publication DOIs -> int
+        'shared_pubs': List of shared nonempty publication DOIs -> list
         'is_thesis_coauthor': True if any candidate coauthored the thesis -> bool
         """
         
@@ -623,7 +623,11 @@ class AuthorRelations:
         self.logger.info("Searching for potential supervisors among contributors.")
 
         self.potential_supervisors = []
-        phd_dois = self.phd_publications["doi"].tolist()
+        # Missing or blank DOIs cannot establish that two works are shared.
+        phd_dois = {
+            doi for doi in self.phd_publications["doi"]
+            if isinstance(doi, str) and doi.strip()
+        }
 
         for idx, contributor_name in enumerate(self.contributors):
             contributor_rank = idx + 1
@@ -701,8 +705,11 @@ class AuthorRelations:
                 works = get_authored_works(
                     author_id=candidate['id'], author_name=candidate['display_name']
                 )
-                contrib_dois = set(works['doi'].tolist())
-                shared_pubs = set(phd_dois).intersection(contrib_dois)
+                contrib_dois = {
+                    doi for doi in works['doi']
+                    if isinstance(doi, str) and doi.strip()
+                }
+                shared_pubs = phd_dois.intersection(contrib_dois)
                 shared_pub_union.update(shared_pubs)
 
                 if len(shared_pub_union) >= self.n_shared_pubs_min:
