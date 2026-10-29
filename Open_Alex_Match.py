@@ -31,6 +31,7 @@ from src.open_alex_helpers import (
 )
 from src.dataset_config_helpers import read_config, load_dataset
 from src.api_cache_helpers import (
+    OpenAlexBudgetTracker,
     OpenAlexDailyLimitError,
     configure_pyalex_http_timeout,
     ensure_openalex_budget_available,
@@ -77,11 +78,13 @@ config.api_key = read_secret("openalex_api_key.txt")
 # %%
 config.max_retries = 3
 config.retry_backoff_factor = 1
+budget_tracker = OpenAlexBudgetTracker()
 configure_pyalex_http_timeout(
     connect_timeout=5,
     read_timeout=20,
     respect_retry_after=True,
     max_retry_backoff=10,
+    budget_tracker=budget_tracker,
 )
 
 # Stop before loading the model or processing rows if OpenAlex cannot accept
@@ -95,6 +98,7 @@ except Exception as exc:
     print(f"WARNING: OpenAlex budget preflight unavailable: {exc}")
 else:
     if rate_limit_status:
+        budget_tracker.update_from_status(rate_limit_status)
         print(
             "OpenAlex API budget: "
             f"${rate_limit_status['daily_remaining_usd']} daily and "
@@ -241,8 +245,11 @@ with tqdm(
     bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}",
 ) as progress:
     for row_number, (_, row) in enumerate(pubs_high_contrib_df.iterrows(), start=1):
+        row_details = (
+            f"row={row_number}, id={row['integer_id']}, phd={str(row['phd_name'])[:30]}"
+        )
         progress.set_postfix_str(
-            f"row={row_number}, id={row['integer_id']}, phd={str(row['phd_name'])[:30]}",
+            f"{budget_tracker.format_progress()} | {row_details}",
             refresh=True,
         )
         try:
@@ -257,6 +264,13 @@ with tqdm(
                 "Extraction stopped before writing output: "
                 f"{exc} Completed rows in this run: {row_number - 1}."
             ) from None
+        finally:
+            # The next normal tqdm refresh (or close on error) shows the latest
+            # balances without forcing an extra terminal redraw per request.
+            progress.set_postfix_str(
+                f"{budget_tracker.format_progress()} | {row_details}",
+                refresh=False,
+            )
         extraction_frames.append(row_result)
         if row_result["processing_error"].notna().any():
             entries_with_skipped_data += 1

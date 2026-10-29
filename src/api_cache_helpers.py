@@ -1,5 +1,6 @@
 import logging
 from datetime import timezone
+from math import isfinite
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -33,14 +34,70 @@ class OpenAlexDailyLimitError(RequestException):
         )
 
 
-def _number_from_header(headers, name):
-    value = headers.get(name)
-    if value is None:
-        return None
+def _number_or_none(value):
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    return number if isfinite(number) else None
+
+
+def _number_from_header(headers, name):
+    return _number_or_none(headers.get(name))
+
+
+class OpenAlexBudgetTracker:
+    """Keep the last reported USD balances in memory without making requests."""
+
+    def __init__(self):
+        self.daily_budget_usd = None
+        self.daily_used_usd = None
+        self.daily_remaining_usd = None
+        self.prepaid_remaining_usd = None
+
+    def update_from_status(self, status):
+        """Seed balances from the extraction's existing budget preflight."""
+        for field in (
+            "daily_budget_usd",
+            "daily_used_usd",
+            "daily_remaining_usd",
+            "prepaid_remaining_usd",
+        ):
+            value = _number_or_none(status.get(field))
+            if value is not None and value >= 0:
+                setattr(self, field, value)
+
+    def update_from_response(self, response):
+        """Read live USD headers; cached headers describe historical balances."""
+        if getattr(response, "from_cache", False):
+            return
+
+        for field, header in (
+            ("daily_budget_usd", "X-RateLimit-Limit-USD"),
+            ("daily_remaining_usd", "X-RateLimit-Remaining-USD"),
+            ("prepaid_remaining_usd", "X-RateLimit-Prepaid-Remaining-USD"),
+        ):
+            value = _number_from_header(response.headers, header)
+            if value is not None and value >= 0:
+                setattr(self, field, value)
+
+        if self.daily_budget_usd is not None and self.daily_remaining_usd is not None:
+            self.daily_used_usd = max(
+                0, self.daily_budget_usd - self.daily_remaining_usd
+            )
+
+    def format_progress(self):
+        """Format daily account usage, retaining sub-cent request precision."""
+        def money(value):
+            return f"${value:.4f}" if value is not None else "n/a"
+
+        summary = (
+            f"day used={money(self.daily_used_usd)} "
+            f"left={money(self.daily_remaining_usd)}"
+        )
+        if self.prepaid_remaining_usd is not None and self.prepaid_remaining_usd > 0:
+            summary += f" prepaid={money(self.prepaid_remaining_usd)}"
+        return summary
 
 
 def _seconds_from_header(headers, name="X-RateLimit-Reset"):
@@ -172,6 +229,7 @@ def configure_pyalex_http_timeout(
     respect_retry_after=True,
     max_retry_backoff=10,
     max_rate_limit_retries=3,
+    budget_tracker=None,
 ):
     """
     Add finite timeouts, bounded retry delays, and request timing logs to PyAlex.
@@ -182,6 +240,7 @@ def configure_pyalex_http_timeout(
 
     HTTP 429 responses are handled separately so daily-budget exhaustion can
     stop immediately, while short-lived rate limits use bounded retries.
+    An optional budget tracker reads each response without extra HTTP requests.
     """
     global _PYALEX_SESSION_PATCHED
 
@@ -240,6 +299,8 @@ def configure_pyalex_http_timeout(
                 rate_limit_attempt = 0
                 while True:
                     response = original_request(method, url, **kwargs)
+                    if budget_tracker is not None:
+                        budget_tracker.update_from_response(response)
                     if response.status_code != 429:
                         break
 
