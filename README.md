@@ -54,3 +54,27 @@ The matching workflow reduces API usage through the following choices:
 - Sampling, contributor selection, and gold-standard mode in [dataset_config.yaml](dataset_config.yaml) allow smaller runs before processing the full dataset.
 
 Limiting retrieval reduces requests but can miss matching evidence outside the fetched works and authorships.
+
+### OpenAlex API pricing
+
+As of 29 October 2026, [OpenAlex pricing](https://help.openalex.org/access/example-costs/) charges the following rates in USD per API request (one results page):
+
+| Request type | Cost per request | Use in the extraction |
+| --- | ---: | --- |
+| Author-name search (`/authors?search=...`) | $0.001 | One search per PhD, examining the first 10 candidates, and one search per considered contributor, examining up to 100 candidates. Contributor searches run only when the PhD is confirmed and has an affiliation in the target years. |
+| Filtered works list (`/works?filter=author.id:...`) | $0.0001 | One request per PhD candidate that passes the name check, returning up to 100 works. At most 10 such requests per PhD; no additional pages or contributor works are fetched. |
+
+Single-entity lookups by ID or DOI are free. Fetching an author's works uses the paid filtered-list endpoint above. Thesis-title similarity is computed locally with [SPECTER](https://github.com/allenai/specter). Affiliation and coauthorship checks reuse the returned data without additional API requests.
+
+The current gold-standard sample contains 500 rows, of which 497 have a PhD name and are processed. Assuming two contributors per PhD[^1], a fresh run with no cache hits has this conservative request budget:
+
+[^1]: By default, we retain two contributors per PhD.
+
+| Extraction step | Requests | API usage cost |
+| --- | ---: | ---: |
+| PhD name searches | 497 | $0.497 |
+| Contributor name searches | 994 | $0.994 |
+| Works lists for up to 10 candidates per PhD | Up to 4,970 | Up to $0.497 |
+| **Total (up to)** | **6,461** | **$1.988** |
+
+As of 29 October 2026, OpenAlex includes $1 of free daily usage with an API key. Spreading extraction across daily allowances can make the out-of-pocket cost $0; the script stops when the daily allowance and prepaid balance are exhausted, and cached responses can be reused on a later run.
