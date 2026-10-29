@@ -23,4 +23,5 @@ nrows:
 
 # Choose rank after which we cut of contributors.
 # 1 means we only keep the first, 2 the first two etc.
-min_rank_contrib:
+# c.f. https://github.com/StefKirsch/clean-and-enrich-phd-supervisor-data/issues/19#issuecomment-3518024350
+min_rank_contrib: 2
