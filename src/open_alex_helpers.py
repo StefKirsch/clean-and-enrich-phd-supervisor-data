@@ -543,6 +543,7 @@ class AuthorRelations:
             'sup_match_by': '',
             'n_shared_pubs': 0,
             'shared_pubs': [],
+            'shared_work_ids': [],
             'is_thesis_coauthor': False,
         }
         
@@ -551,10 +552,12 @@ class AuthorRelations:
         """
         Based on relationships between `self.phd_candidate` and contributors collect metadata that indicates supervision. 
         
-        Search OpenAlex by contributor name and retain candidates that pass the name sanity check
+        Search the first 100 OpenAlex contributor-name results and retain candidates
+        whose main name or an alternative name passes the name sanity check
         and share an affiliation with the PhD in the target years, subject to the Dutch-affiliation check.
         Merge identities and publication metadata only across these eligible candidates.
-        'name_matches_open_alex' separately records all candidates passing the name check.
+        'name_matches_open_alex' separately records the canonical names of all
+        profiles passing the name check, including via an alternative name.
         Shared publications and thesis coauthorship use the authorships already
         returned with the PhD's works; no contributor works queries are needed.
         
@@ -568,8 +571,9 @@ class AuthorRelations:
         'n_shared_inst_grad': Number of institutions PhD candidate and contributors share at graduation -> int
         'is_sup_in_pilot_dataset': True if any candidate is in pilot dataset -> bool
         'sup_match_by': Description of matching criterion -> str
-        'n_shared_pubs': Number of distinct shared nonempty publication DOIs -> int
+        'n_shared_pubs': Number of distinct shared OpenAlex work IDs, including works without DOIs -> int
         'shared_pubs': List of shared nonempty publication DOIs -> list
+        'shared_work_ids': List of distinct shared OpenAlex work IDs -> list
         'is_thesis_coauthor': True if any candidate coauthored the thesis -> bool
         """
         
@@ -649,7 +653,7 @@ class AuthorRelations:
             )
 
             # Search for contributors in OpenAlex
-            openalex_candidates = Authors().search(contributor_name).get()
+            openalex_candidates = Authors().search(contributor_name).get(page=1, per_page=100)
             self.logger.debug(
                 f"Found {len(openalex_candidates)} OpenAlex candidates for '{contributor_name}'."
             )
@@ -678,6 +682,7 @@ class AuthorRelations:
             name_matches_open_alex = [] # Name match with OpenAlex
             matched_candidates = []
             shared_pub_union = set()
+            shared_work_union = set()
             all_shared_affils = set()
             coauthorship_flag = False
             same_grad_inst_flag = False
@@ -688,8 +693,17 @@ class AuthorRelations:
             # that pass both checks so homonyms cannot contribute identities or metadata.
             for candidate in openalex_candidates:
                 
-                # Some basic sanity checking if the two names could realistically refer to the same person
-                if not name_sanity_check(contributor_name, candidate['display_name']):
+                # OpenAlex may find a profile via an alternative spelling or surname.
+                # Apply the same sanity check to each name, retaining the profile once.
+                candidate_names = [candidate['display_name']]
+                alternatives = candidate.get('display_name_alternatives')
+                if isinstance(alternatives, list):
+                    candidate_names.extend(alternatives)
+                if not any(
+                    isinstance(name, str) and name.strip()
+                    and name_sanity_check(contributor_name, name)
+                    for name in candidate_names
+                ):
                     continue
                 
                 name_matches_open_alex.append(candidate['display_name'])
@@ -711,14 +725,19 @@ class AuthorRelations:
                 all_shared_affils.update(shared_affils)
 
                 # Match by OpenAlex author ID within the PhD's fetched works.
-                shared_works = works_by_coauthor.get(candidate['id'], [])
+                shared_works = [
+                    work for work in works_by_coauthor.get(candidate['id'], [])
+                    if isinstance(work['work_id'], str) and work['work_id'].strip()
+                ]
+                shared_work_ids = {work['work_id'] for work in shared_works}
+                shared_work_union.update(shared_work_ids)
                 shared_pubs = {
                     work['doi'] for work in shared_works
                     if isinstance(work['doi'], str) and work['doi'].strip()
                 }
                 shared_pub_union.update(shared_pubs)
 
-                if len(shared_pub_union) >= self.n_shared_pubs_min:
+                if len(shared_work_union) >= self.n_shared_pubs_min:
                     coauthorship_flag = True
 
                 if self.thesis_id is not None and any(
@@ -734,7 +753,7 @@ class AuthorRelations:
                 
                 self.logger.debug(
                     f"Processing name match '{candidate['display_name']}' for NARCIS name '{contributor_name}': "
-                    f"{len(shared_pubs)} shared publications, "
+                    f"{len(shared_work_ids)} shared publications, "
                     f"{'thesis coauthor' if thesis_coauthor_flag else 'not thesis coauthor'}, "
                     f"{'same graduation institution' if same_grad_inst_flag else 'not same graduation institution'}, and "
                     f"{'in pilot dataset' if pilot_flag else 'not in pilot dataset'}"
@@ -757,8 +776,9 @@ class AuthorRelations:
                 "n_shared_inst_grad":         len(all_shared_affils),
                 "same_grad_inst":             same_grad_inst_flag,
                 "is_sup_in_pilot_dataset":    pilot_flag,
-                "n_shared_pubs":              len(shared_pub_union),
-                "shared_pubs":                list(shared_pub_union),
+                "n_shared_pubs":              len(shared_work_union),
+                "shared_pubs":                sorted(shared_pub_union),
+                "shared_work_ids":            sorted(shared_work_union),
                 "is_thesis_coauthor":         thesis_coauthor_flag,
                 "supervisor_confirmed":       criteria_met,
                 "sup_match_by": (
@@ -836,6 +856,7 @@ class AuthorRelations:
             'is_sup_in_pilot_dataset', 
             'n_shared_pubs', 
             'shared_pubs', 
+            'shared_work_ids',
             'is_thesis_coauthor',
             'processing_error',
         ]
@@ -866,6 +887,7 @@ class AuthorRelations:
             n_shared_inst_grad = supervisor_data['n_shared_inst_grad']
             is_sup_in_pilot_dataset = supervisor_data['is_sup_in_pilot_dataset']
             shared_pubs = supervisor_data['shared_pubs']
+            shared_work_ids = supervisor_data['shared_work_ids']
             is_thesis_coauthor = supervisor_data['is_thesis_coauthor']
 
             result_row = {
@@ -899,8 +921,9 @@ class AuthorRelations:
                 'same_grad_inst': same_grad_inst,
                 'n_shared_inst_grad': n_shared_inst_grad,
                 'is_sup_in_pilot_dataset': is_sup_in_pilot_dataset,
-                'n_shared_pubs': len(shared_pubs),
+                'n_shared_pubs': len(shared_work_ids),
                 'shared_pubs': shared_pubs,
+                'shared_work_ids': shared_work_ids,
                 'is_thesis_coauthor': is_thesis_coauthor,
                 'processing_error': self.processing_error,
             }
