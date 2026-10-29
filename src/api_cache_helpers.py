@@ -1,4 +1,6 @@
 import logging
+from datetime import timezone
+from pathlib import Path
 from time import monotonic, sleep
 
 import pyalex.api
@@ -123,15 +125,45 @@ def initialize_request_cache():
     """
     Initialize the request cache to store responses from OpenAlex in a SQLite database on disk (openalex_cache.sqlite).
 
-    The cache is set to never expire, so it will continue to store responses indefinitely.  
+    Print startup diagnostics, using response creation dates rather than file dates.
+    The cache is set to never expire, so it will continue to store responses indefinitely.
     To clear the cache, call `requests_cache.clear()`.  To delete the cache, call `requests_cache.uninstall_cache()`.
     """
+    cache_path = Path('openalex_cache.sqlite').resolve()
+    cache_exists = cache_path.is_file()
     requests_cache.install_cache(
         cache_name='openalex_cache',
         backend='sqlite',
         expire_after=requests_cache.NEVER_EXPIRE
-
     )
+    cache = requests_cache.get_cache()
+    action = 'reusing existing' if cache_exists else 'created new'
+    print(f"OpenAlex cache: {action} local database at {cache_path}.", flush=True)
+    response_count = cache.count()
+    print(
+        f"  Cached responses: {response_count:,} | "
+        f"Database size: {cache_path.stat().st_size / (1024 ** 2):.2f} MiB | "
+        "Expiry: never",
+        flush=True,
+    )
+
+    # Creation timestamps are stored inside serialized responses, so stream
+    # through them without keeping the entire database in memory.
+    oldest = newest = None
+    for response in cache.filter():
+        created_at = response.created_at
+        if created_at is None:
+            continue
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        created_at = created_at.astimezone(timezone.utc)
+        oldest = min(oldest, created_at) if oldest is not None else created_at
+        newest = max(newest, created_at) if newest is not None else created_at
+
+    no_date = 'N/A (empty database)' if response_count == 0 else 'unavailable'
+    oldest_date = oldest.strftime('%Y-%m-%d %H:%M:%S UTC') if oldest else no_date
+    newest_date = newest.strftime('%Y-%m-%d %H:%M:%S UTC') if newest else no_date
+    print(f"  Oldest entry: {oldest_date}\n  Newest entry: {newest_date}")
 
 
 def configure_pyalex_http_timeout(
