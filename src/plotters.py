@@ -121,7 +121,7 @@ class PhDMatchPlotter:
     def plot(self, *, ax: plt.Axes | None = None) -> plt.Axes:
         """Render the bar chart; return the `Axes` used."""
         if ax is None:
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(figsize=(10, 8))
         else:
             fig = ax.figure
 
@@ -154,6 +154,7 @@ class PhDMatchPlotter:
             loc="upper left",
         )
 
+        fig.tight_layout()
         return ax
 
     # -----------------------------------------------------------------
@@ -314,7 +315,7 @@ class ContributorMatchPlotter:
     def plot(self, *, ax: plt.Axes | None = None) -> plt.Axes:
         """Render the bar chart; return the `Axes` used."""
         if ax is None:
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(figsize=(10, 8))
         else:
             fig = ax.figure
 
@@ -345,8 +346,6 @@ class ContributorMatchPlotter:
             fontsize=10,
         )
         fig.suptitle("Contributor Matching Confirmation by Type", fontsize=12)
-        fig.subplots_adjust(top=0.85, bottom=0.28, right=0.97)
-
 
         ax.legend(
             handles=[
@@ -361,7 +360,7 @@ class ContributorMatchPlotter:
         # ensure edge bars are fully visible
         ax.set_xlim(self.x_pos[0] - self.bar_width,
                     self.x_pos[-1] + self.bar_width)
-        fig.subplots_adjust(right=0.97, bottom=0.28)
+        fig.tight_layout()
         return ax
 
     # -----------------------------------------------------------------
