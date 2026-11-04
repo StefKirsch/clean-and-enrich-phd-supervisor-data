@@ -555,7 +555,10 @@ class AuthorRelations:
         Search the first 100 OpenAlex contributor-name results and retain candidates
         whose main name or an alternative name passes the name sanity check
         and share an affiliation with the PhD in the target years, subject to the Dutch-affiliation check.
-        Merge identities and publication metadata only across these eligible candidates.
+        Merge identities and confirmed publication metadata only across these eligible candidates.
+        If no candidate shares an affiliation, retain publication evidence from
+        name-matched profiles without confirming the contributor. This also applies
+        when the confirmed PhD has no affiliation recorded in the target years.
         'name_matches_open_alex' separately records the canonical names of all
         profiles passing the name check, including via an alternative name.
         Shared publications and thesis coauthorship use the authorships already
@@ -603,26 +606,19 @@ class AuthorRelations:
             self.phd_candidate, in_target_years=True
         )
         
-        # Case 2: no affiliations in target years
+        # Missing affiliations prevent confirmation, but not coauthorship checks.
         if not phd_affiliations_at_graduation:
             self.logger.warning(
-                "PhD candidate has no affiliations in target years. Cannot find potential supervisors; "
-                "recording contributors only with NARCIS data."
+                "PhD candidate has no affiliations in target years. "
+                "Checking shared publications only; contributors cannot be confirmed."
             )
             self.log_progress(
-                "SUPERVISOR CHECK SKIPPED",
-                "No affiliation was found around graduation; contributor names were retained.",
+                "PUBLICATION EVIDENCE ONLY",
+                "No affiliation was found around graduation; checking coauthorship "
+                "without confirming contributors.",
             )
 
-            for idx, contributor_name in enumerate(self.contributors):
-                contributor_rank = idx + 1
-                self.potential_supervisors.append(
-                    self._init_supervisor_record(contributor_name, contributor_rank)
-                )
-
-            return self.potential_supervisors
-
-        # Case 3: PhD candidate confirmed with affiliation in target years
+        # Search contributors for every confirmed PhD, including those without affiliations.
         self.logger.debug(
             f"Target Institutions: {phd_affiliations_at_graduation}, "
             f"Target Years: {self.affiliation_target_years}"
@@ -683,14 +679,16 @@ class AuthorRelations:
             matched_candidates = []
             shared_pub_union = set()
             shared_work_union = set()
+            name_matched_pub_union = set()
+            name_matched_work_union = set()
             all_shared_affils = set()
             coauthorship_flag = False
             same_grad_inst_flag = False
             pilot_flag = False
             thesis_coauthor_flag = False
 
-            # OpenAlex may split one author across multiple profiles. Merge only profiles
-            # that pass both checks so homonyms cannot contribute identities or metadata.
+            # OpenAlex may split one author across multiple profiles. Only profiles
+            # passing both checks contribute identities and confirmed metadata.
             for candidate in openalex_candidates:
                 
                 # OpenAlex may find a profile via an alternative spelling or surname.
@@ -708,6 +706,20 @@ class AuthorRelations:
                 
                 name_matches_open_alex.append(candidate['display_name'])
 
+                # Collect coauthorship before requiring an affiliation. Use this
+                # broader evidence only if no profile qualifies for confirmation.
+                shared_works = [
+                    work for work in works_by_coauthor.get(candidate['id'], [])
+                    if isinstance(work['work_id'], str) and work['work_id'].strip()
+                ]
+                shared_work_ids = {work['work_id'] for work in shared_works}
+                shared_pubs = {
+                    work['doi'] for work in shared_works
+                    if isinstance(work['doi'], str) and work['doi'].strip()
+                }
+                name_matched_work_union.update(shared_work_ids)
+                name_matched_pub_union.update(shared_pubs)
+
                 # Affiliations
                 cand_affils = self.get_candidate_affiliations(
                     candidate, in_target_years=True, must_be_dutch=True
@@ -716,25 +728,17 @@ class AuthorRelations:
 
                 if not shared_affils:
                     self.logger.debug(
-                        f"Skipping name match '{candidate['display_name']}': "
-                        "no shared affiliation in the target years."
+                        f"Name match '{candidate['display_name']}' has no shared "
+                        f"affiliation in the target years; retaining {len(shared_work_ids)} "
+                        "shared publications as unconfirmed evidence."
                     )
                     continue
 
                 matched_candidates.append(candidate)
                 all_shared_affils.update(shared_affils)
 
-                # Match by OpenAlex author ID within the PhD's fetched works.
-                shared_works = [
-                    work for work in works_by_coauthor.get(candidate['id'], [])
-                    if isinstance(work['work_id'], str) and work['work_id'].strip()
-                ]
-                shared_work_ids = {work['work_id'] for work in shared_works}
+                # Confirmed publication metadata uses only eligible profiles.
                 shared_work_union.update(shared_work_ids)
-                shared_pubs = {
-                    work['doi'] for work in shared_works
-                    if isinstance(work['doi'], str) and work['doi'].strip()
-                }
                 shared_pub_union.update(shared_pubs)
 
                 if len(shared_work_union) >= self.n_shared_pubs_min:
@@ -768,6 +772,11 @@ class AuthorRelations:
             
             criteria_met = bool(len(all_shared_affils)) # We require at least one shared affiliation in the target years around graduation
             sup_match_by = "Shared affiliation at graduation."
+
+            if not criteria_met:
+                shared_work_union = name_matched_work_union
+                shared_pub_union = name_matched_pub_union
+                thesis_coauthor_flag = self.thesis_id in shared_work_union
             
             # Fill aggregated values
             supervisor_data.update({

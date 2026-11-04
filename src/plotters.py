@@ -265,8 +265,8 @@ class ContributorMatchPlotter:
         "PhD not confirmed",
         "No contributor name match in OpenAlex",
         "No shared publications or affiliation in target years",
-        "Shared affiliation in target years only",
         "Shared publications only",
+        "Shared affiliation in target years only",
         "Shared publications and affiliation in target years",
     ]
 
