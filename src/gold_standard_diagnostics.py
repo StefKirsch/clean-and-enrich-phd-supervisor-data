@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 
 import numpy as np
@@ -74,6 +75,28 @@ def orcids(value) -> frozenset[str]:
     return frozenset(result)
 
 
+def identity_ids(openalex_ids, orcid_ids) -> frozenset[str]:
+    """Keep identifier types distinct while accepting either as evidence."""
+    return openalex_ids | frozenset(f"ORCID:{value}" for value in orcid_ids)
+
+
+def supervisor_references(identities) -> dict[str, frozenset[str]]:
+    """Group identifiers for each manual supervisor, ignoring duplicate slots."""
+    groups = []
+    for identifiers in identities:
+        if not identifiers:
+            continue
+        separate = []
+        for group in groups:
+            if identifiers & group:
+                identifiers = identifiers | group
+            else:
+                separate.append(group)
+        groups = separate + [identifiers]
+    # OpenAlex IDs sort before ORCID keys and make familiar reference labels.
+    return {min(group): group for group in groups}
+
+
 def flag(value) -> bool:
     value = text(value).lower()
     if value in {"true", "1", "1.0"}:
@@ -124,10 +147,10 @@ def recover_manual_keys(raw: pd.DataFrame, automated: pd.DataFrame):
 
 
 def clean_manual_identifiers(raw: pd.DataFrame):
-    """Audit unambiguous URL repairs and exclude malformed secondary ORCIDs.
+    """Audit unambiguous URL repairs and exclude malformed ORCIDs.
 
     Truncated ORCIDs are never guessed. Invalid author IDs still raise an error,
-    since they define the primary comparison rather than an auxiliary check.
+    so malformed OpenAlex annotations cannot silently disappear.
     """
     result = raw.copy()
     audit = []
@@ -161,15 +184,31 @@ def clean_manual_identifiers(raw: pd.DataFrame):
     ])
 
 
-def prepare_manual(raw: pd.DataFrame, alternative_supervisor_slots=None):
+def limit_manual_supervisors(raw: pd.DataFrame, max_supervisors=None) -> pd.DataFrame:
+    """Return a copy retaining the requested manual supervisor slots."""
+    if max_supervisors is None or max_supervisors == 0:
+        return raw.copy()
+    if not isinstance(max_supervisors, int) or max_supervisors < 0:
+        raise ValueError("max_supervisors must be a nonnegative integer or None.")
+    excluded = []
+    for column in raw:
+        match = re.fullmatch(r"(?:supervisor|open_alex_id_supervisor|orcid_supervisor|contributor)_(\d+)", column)
+        if match and int(match.group(1)) > max_supervisors:
+            excluded.append(column)
+    return raw.drop(columns=excluded).copy()
+
+
+def prepare_manual(raw: pd.DataFrame, alternative_supervisor_slots=None, max_supervisors=None):
     """Keep original annotations, and apply only explicitly mapped corrections.
 
     alternative_supervisor_slots maps source integer_id to supervisor slot (1..5).
     These alternatives replace the slot's superseded ID; they are never assumed
     to be alternative PhD identities. Unmapped alternatives remain audit items.
     """
+    raw = limit_manual_supervisors(raw, max_supervisors)
+    slots = range(1, min(max_supervisors or 5, 5) + 1)
     _require(raw, ["integer_id", "author_name", "open_alex_id_candidate"] + [
-        column for slot in range(1, 6)
+        column for slot in slots
         for column in (f"supervisor_{slot}", f"open_alex_id_supervisor_{slot}")
     ])
     manual = raw.copy().fillna("")
@@ -186,29 +225,33 @@ def prepare_manual(raw: pd.DataFrame, alternative_supervisor_slots=None):
     for row in manual.to_dict("records"):
         key = row["integer_id"]
         phd_ids = author_ids(row["open_alex_id_candidate"])
-        sup_ids, sup_orcids, unresolved = set(), set(), 0
+        sup_identities, sup_orcids, unresolved = [], set(), 0
         named = 0
         slot_override = corrections.get(key)
         if slot_override is not None and slot_override not in range(1, 6):
             raise ValueError(f"Invalid supervisor slot for {key}: {slot_override}")
         alternative = text(row.get("alternative_open_alex_id"))
-        if slot_override is not None and not alternative:
+        if slot_override in slots and not alternative:
             raise ValueError(f"No alternative OpenAlex ID available for {key}")
-        for slot in range(1, 6):
+        for slot in slots:
             ids = author_ids(row[f"open_alex_id_supervisor_{slot}"])
             slot_orcids = orcids(row.get(f"orcid_supervisor_{slot}"))
             name = text(row[f"supervisor_{slot}"])
             if slot == slot_override:
                 ids = author_ids(alternative)
                 slot_orcids = orcids(row.get("alternative_orcid"))
-            named += bool(name or ids)
-            unresolved += bool(name and not ids)
-            sup_ids.update(ids)
+            named += bool(name or ids or slot_orcids)
+            unresolved += bool(name and not (ids or slot_orcids))
+            sup_identities.append(identity_ids(ids, slot_orcids))
             sup_orcids.update(slot_orcids)
+        references = supervisor_references(sup_identities)
+        phd_orcids = orcids(row.get("orcid_candidate"))
         row.update(
             reference_phd_ids=phd_ids,
-            reference_phd_orcids=orcids(row.get("orcid_candidate")),
-            reference_supervisor_ids=frozenset(sup_ids),
+            reference_phd_orcids=phd_orcids,
+            reference_phd_identifiers=identity_ids(phd_ids, phd_orcids),
+            reference_supervisor_ids=frozenset(references),
+            reference_supervisor_identifiers=references,
             reference_supervisor_orcids=frozenset(sup_orcids),
             n_manual_supervisors=named,
             n_unresolved_supervisors=unresolved,
@@ -216,11 +259,14 @@ def prepare_manual(raw: pd.DataFrame, alternative_supervisor_slots=None):
         )
         records.append(row)
         if alternative:
+            action = "Unmapped: review required"
+            if slot_override is not None:
+                action = "Replaced supervisor ID" if slot_override in slots else "Outside retained supervisor scope"
             audit.append({
                 "integer_id": key, "supervisor_slot": slot_override,
                 "original_id": row.get(f"open_alex_id_supervisor_{slot_override}", ""),
                 "alternative_id": alternative,
-                "action": "Replaced supervisor ID" if slot_override else "Unmapped: review required",
+                "action": action,
                 "notes": row.get("notes", ""),
             })
     return pd.DataFrame(records), pd.DataFrame(audit, columns=[
@@ -239,6 +285,11 @@ def prepare_automated(raw: pd.DataFrame) -> pd.DataFrame:
     auto["candidate_phd_orcids"] = auto.get("phd_orcid", pd.Series("", index=auto.index)).map(orcids)
     auto["candidate_supervisor_ids"] = auto.contributor_id.map(author_ids)
     auto["candidate_supervisor_orcids"] = auto.get("contributor_orcid", pd.Series("", index=auto.index)).map(orcids)
+    for role in ("phd", "supervisor"):
+        auto[f"candidate_{role}_identifiers"] = [
+            identity_ids(ids, orcid_ids)
+            for ids, orcid_ids in zip(auto[f"candidate_{role}_ids"], auto[f"candidate_{role}_orcids"])
+        ]
     auto["phd_confirmed"] = auto.phd_match_by.ne("")
     # Refuse to choose an arbitrary first row when repeated PhD metadata disagree.
     for column in ["candidate_phd_ids", "candidate_phd_orcids", "phd_match_by",
@@ -256,8 +307,50 @@ def union_ids(values) -> frozenset[str]:
 
 
 def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
-    """Return thesis and contributor diagnostics; missing manual IDs stay unscored."""
-    grouped = {key: group for key, group in auto.groupby("integer_id", sort=False)}
+    """Accept any matching ID per confirmed find, regardless of supervisor order.
+
+    Additional IDs in a successful contributor's lists are diagnostic only.
+    Missing manual identities remain unscored; complete links also need a
+    confirmed PhD with at least one matching OpenAlex ID or ORCID.
+    """
+    contributors = auto.merge(manual[[
+        "integer_id", "reference_supervisor_ids", "reference_supervisor_identifiers",
+        "reference_supervisors_complete",
+    ]], on="integer_id", how="inner", validate="many_to_one")
+    contributors["n_candidate_ids"] = contributors.candidate_supervisor_ids.map(len)
+    contributor_records = contributors.to_dict("records")
+    contributors["matched_reference_ids"] = [
+        frozenset(
+            key for key, identifiers in row["reference_supervisor_identifiers"].items()
+            if row["candidate_supervisor_identifiers"] & identifiers
+        ) for row in contributor_records
+    ]
+    contributors["extra_candidate_ids"] = [
+        row["candidate_supervisor_ids"] - union_ids(row["reference_supervisor_identifiers"].values())
+        for row in contributor_records
+    ]
+    contributors["scored_supervisor_ids"] = [
+        matched or ids or identifiers
+        for matched, ids, identifiers in zip(
+            contributors.matched_reference_ids, contributors.candidate_supervisor_ids,
+            contributors.candidate_supervisor_identifiers,
+        )
+    ]
+    contributors["contributor_correct"] = (
+        contributors.contributor_confirmed & contributors.matched_reference_ids.map(bool)
+    )
+
+    def contributor_outcome(row):
+        if not row.contributor_confirmed:
+            return "Not confirmed"
+        if not row.candidate_supervisor_identifiers:
+            return "Confirmed without ID"
+        if row.matched_reference_ids:
+            return "Reference hit + extra IDs" if row.extra_candidate_ids else "Reference IDs only"
+        return "No reference hit" if row.reference_supervisors_complete else "Incomplete reference (unscored)"
+
+    contributors["identity_outcome"] = [contributor_outcome(row) for row in contributors.itertuples()]
+    grouped = {key: group for key, group in contributors.groupby("integer_id", sort=False)}
     records = []
     for ref in manual.to_dict("records"):
         group = grouped.get(ref["integer_id"])
@@ -266,8 +359,9 @@ def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
         confirmed = bool(first.get("phd_confirmed", False))
         candidate = first.get("candidate_phd_ids", EMPTY)
         predicted = candidate if confirmed else EMPTY
-        truth = ref["reference_phd_ids"]
-        correct = bool(predicted and predicted.issubset(truth)) if truth else False
+        truth = ref["reference_phd_identifiers"]
+        candidate_identifiers = first.get("candidate_phd_identifiers", EMPTY)
+        correct = confirmed and bool(candidate_identifiers & truth)
         if not truth:
             outcome = PHD_OUTCOMES[4]
         elif not found:
@@ -276,7 +370,7 @@ def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
             outcome = PHD_OUTCOMES[2]
         else:
             outcome = PHD_OUTCOMES[0] if correct else PHD_OUTCOMES[1]
-        predicted_sups = union_ids(group.loc[group.contributor_confirmed, "candidate_supervisor_ids"]) if found else EMPTY
+        predicted_sups = union_ids(group.loc[group.contributor_confirmed, "scored_supervisor_ids"]) if found else EMPTY
         candidate_sups = union_ids(group.candidate_supervisor_ids) if found else EMPTY
         truth_sups = ref["reference_supervisor_ids"]
         identity_hits = predicted_sups & truth_sups
@@ -285,7 +379,10 @@ def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
         row.update(
             in_automated=found, phd_confirmed=confirmed, phd_correct=correct,
             phd_outcome=outcome, candidate_phd_ids=candidate, predicted_phd_ids=predicted,
-            phd_candidate_hit=bool(candidate & truth),
+            candidate_phd_orcids=first.get("candidate_phd_orcids", EMPTY),
+            predicted_phd_orcids=first.get("candidate_phd_orcids", EMPTY) if confirmed else EMPTY,
+            phd_candidate_hit=bool(candidate_identifiers & truth),
+            phd_openalex_agrees=bool(candidate & ref["reference_phd_ids"]),
             phd_orcid_comparable=bool(ref["reference_phd_orcids"] and first.get("candidate_phd_orcids", EMPTY)),
             phd_orcid_agrees=bool(ref["reference_phd_orcids"] & first.get("candidate_phd_orcids", EMPTY)),
             predicted_supervisor_ids=predicted_sups, candidate_supervisor_ids=candidate_sups,
@@ -304,27 +401,8 @@ def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
             row[f"auto_{column}"] = first.get(column, "")
         records.append(row)
     theses = pd.DataFrame(records)
-    # many_to_one prevents accidental multiplication by manual annotation rows.
-    contributors = auto.merge(manual[[
-        "integer_id", "reference_supervisor_ids", "reference_supervisors_complete",
-    ]], on="integer_id", how="inner", validate="many_to_one")
-    contributors["n_candidate_ids"] = contributors.candidate_supervisor_ids.map(len)
-    contributors["matched_reference_ids"] = contributors.apply(
-        lambda row: row.candidate_supervisor_ids & row.reference_supervisor_ids, axis=1,
-    )
-    contributors["extra_candidate_ids"] = contributors.apply(
-        lambda row: row.candidate_supervisor_ids - row.reference_supervisor_ids, axis=1,
-    )
-    def contributor_outcome(row):
-        if not row.contributor_confirmed:
-            return "Not confirmed"
-        if not row.candidate_supervisor_ids:
-            return "Confirmed without ID"
-        if row.matched_reference_ids:
-            return "Reference hit + extra IDs" if row.extra_candidate_ids else "Reference IDs only"
-        return "No reference hit" if row.reference_supervisors_complete else "Incomplete reference (unscored)"
-    contributors["identity_outcome"] = contributors.apply(contributor_outcome, axis=1)
     contributors["phd_correct"] = contributors.integer_id.map(theses.set_index("integer_id").phd_correct)
+    contributors["link_correct"] = contributors.contributor_correct & contributors.phd_correct
     return theses, contributors
 
 
@@ -351,7 +429,7 @@ def ratio(numerator, denominator):
 
 def metric_summary(theses: pd.DataFrame) -> pd.Series:
     """Observed ID agreement; undefined ratios are NaN, never perfect scores."""
-    phd = theses.loc[theses.reference_phd_ids.map(bool)]
+    phd = theses.loc[theses.reference_phd_identifiers.map(bool)]
     # Precision needs a resolved list; unknown labels are not negative examples.
     relations = phd.loc[phd.reference_supervisors_complete]
     correct = int(phd.phd_correct.sum())
@@ -389,9 +467,14 @@ def group_metrics(theses: pd.DataFrame, column: str) -> pd.DataFrame:
 
 def export_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Make set-valued diagnostics readable and deterministic in CSV exports."""
+    def export_value(value):
+        if isinstance(value, (set, frozenset)):
+            return "; ".join(sorted(value))
+        if isinstance(value, dict):
+            return json.dumps(value, sort_keys=True, default=sorted)
+        return value
+
     result = frame.copy()
     for column in result:
-        result[column] = result[column].map(
-            lambda value: "; ".join(sorted(value)) if isinstance(value, (set, frozenset)) else value,
-        )
+        result[column] = result[column].map(export_value)
     return result
