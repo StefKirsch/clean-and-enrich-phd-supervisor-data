@@ -3,6 +3,7 @@
 *.pyc
 .ipynb_checkpoints
 *.pdf
+data/output/gold_standard_diagnostics/
 # for Open Alex API cache
 *.sqlite  
 

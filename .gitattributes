@@ -1,0 +1,2 @@
+# Remove notebook outputs and execution counts from staged content.
+*.ipynb filter=nbstripout diff=ipynb
