@@ -415,6 +415,70 @@ def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
     return theses, contributors
 
 
+def contributor_disagreements(theses: pd.DataFrame, contributors: pd.DataFrame) -> pd.DataFrame:
+    """Review each missed manual link or unmatched confirmed contributor list.
+
+    Any matching identifier accepts the whole predicted list. All-wrong lists
+    stay together in one row, and incomplete manual lists remain unscored.
+    Missed manual identities are separate rows: no name, rank, or slot pairing
+    with an unmatched prediction is assumed. PhD correctness is context only.
+    """
+    context_columns = [
+        "integer_id", "author_name", "auto_phd_name", "thesis_identifier", "institution", "year",
+        "phd_outcome", "phd_correct", "reference_supervisors_complete", "processing_error", "notes",
+    ]
+    contributor_columns = [
+        "contributor_rank", "contributor_name_narcis", "contributor_name",
+        "contributor_id", "contributor_orcid", "evidence_category", "sup_match_by",
+        "n_shared_pubs", "n_shared_inst_grad",
+    ]
+    defaults = {
+        "contributor_disagreement_outcome": "",
+        "reference_supervisor_ids": EMPTY, "reference_supervisor_identifiers": {},
+        "predicted_supervisor_ids": EMPTY, "missed_supervisor_ids": EMPTY,
+        "unmatched_supervisor_ids": EMPTY, "false_positive_supervisor_ids": EMPTY,
+        "candidate_supervisor_ids": EMPTY, "candidate_supervisor_orcids": EMPTY,
+        **dict.fromkeys(contributor_columns, ""),
+    }
+    shared = theses.loc[theses.in_automated].set_index("integer_id", drop=False).to_dict("index")
+    records = []
+    for thesis in shared.values():
+        context = {column: thesis.get(column, "") for column in context_columns}
+        for reference_id in sorted(thesis["missed_supervisor_ids"]):
+            identifiers = thesis["reference_supervisor_identifiers"][reference_id]
+            records.append({
+                **context, **defaults,
+                "contributor_disagreement_outcome": "Missed supervisor (false negative)",
+                "reference_supervisor_ids": frozenset({reference_id}),
+                "reference_supervisor_identifiers": {reference_id: identifiers},
+                "missed_supervisor_ids": frozenset({reference_id}),
+            })
+    unmatched = contributors.loc[
+        contributors.contributor_confirmed
+        & ~contributors.matched_reference_ids.map(bool)
+        & contributors.candidate_supervisor_identifiers.map(bool)
+    ]
+    for contributor in unmatched.to_dict("records"):
+        thesis = shared.get(contributor["integer_id"])
+        if thesis is None:
+            continue
+        complete = thesis["reference_supervisors_complete"]
+        predicted = contributor["scored_supervisor_ids"]
+        records.append({
+            **{column: thesis.get(column, "") for column in context_columns}, **defaults,
+            **{column: contributor.get(column, "") for column in contributor_columns},
+            "contributor_disagreement_outcome": (
+                "Wrong prediction (false positive)" if complete
+                else "Manual validation incomplete (unscored)"
+            ),
+            "predicted_supervisor_ids": predicted, "unmatched_supervisor_ids": predicted,
+            "false_positive_supervisor_ids": predicted if complete else EMPTY,
+            "candidate_supervisor_ids": contributor["candidate_supervisor_ids"],
+            "candidate_supervisor_orcids": contributor["candidate_supervisor_orcids"],
+        })
+    return pd.DataFrame(records, columns=[*context_columns, *defaults])
+
+
 def coverage_table(manual, auto):
     coverage = manual[["integer_id", "author_name", "institution", "year"]].merge(
         auto[["integer_id", "phd_name"]].drop_duplicates("integer_id"),
