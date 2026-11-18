@@ -309,7 +309,8 @@ def union_ids(values) -> frozenset[str]:
 def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
     """Accept any matching ID per confirmed find, regardless of supervisor order.
 
-    Additional IDs in a successful contributor's lists are diagnostic only.
+    Additional OpenAlex IDs and ORCIDs in a successful contributor's lists
+    are allowed and do not count as incorrect predictions.
     Missing manual identities remain unscored; complete links also need a
     confirmed PhD with at least one matching OpenAlex ID or ORCID.
     """
@@ -325,9 +326,16 @@ def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
             if row["candidate_supervisor_identifiers"] & identifiers
         ) for row in contributor_records
     ]
-    contributors["extra_candidate_ids"] = [
+    contributors["additional_candidate_ids"] = [
         row["candidate_supervisor_ids"] - union_ids(row["reference_supervisor_identifiers"].values())
         for row in contributor_records
+    ]
+    contributors["additional_candidate_orcids"] = [
+        row["candidate_supervisor_orcids"] - frozenset(
+            identifier.removeprefix("ORCID:")
+            for identifier in union_ids(row["reference_supervisor_identifiers"].values())
+            if identifier.startswith("ORCID:")
+        ) for row in contributor_records
     ]
     contributors["scored_supervisor_ids"] = [
         matched or ids or identifiers
@@ -346,7 +354,8 @@ def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
         if not row.candidate_supervisor_identifiers:
             return "Confirmed without ID"
         if row.matched_reference_ids:
-            return "Reference hit + extra IDs" if row.extra_candidate_ids else "Reference IDs only"
+            additional = row.additional_candidate_ids or row.additional_candidate_orcids
+            return "Reference hit + extra IDs" if additional else "Reference IDs only"
         return "No reference hit" if row.reference_supervisors_complete else "Incomplete reference (unscored)"
 
     contributors["identity_outcome"] = [contributor_outcome(row) for row in contributors.itertuples()]
@@ -387,7 +396,7 @@ def compare_identities(manual: pd.DataFrame, auto: pd.DataFrame):
             phd_orcid_agrees=bool(ref["reference_phd_orcids"] & first.get("candidate_phd_orcids", EMPTY)),
             predicted_supervisor_ids=predicted_sups, candidate_supervisor_ids=candidate_sups,
             correct_supervisor_ids=identity_hits, missed_supervisor_ids=truth_sups - identity_hits,
-            extra_supervisor_ids=predicted_sups - truth_sups,
+            unmatched_supervisor_ids=predicted_sups - truth_sups,
             correct_link_ids=link_hits, missed_link_ids=truth_sups - link_hits,
             n_reference_ids=len(truth_sups), n_predicted_ids=len(predicted_sups),
             n_identity_hits=len(identity_hits), n_link_hits=len(link_hits),

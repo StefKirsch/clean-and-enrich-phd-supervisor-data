@@ -11,6 +11,8 @@ data/output/gold_standard_diagnostics/
 *.log
 *.log.*
 
+*.html
+
 # config and settings
 dataset_config.yaml
 contact_email.txt
