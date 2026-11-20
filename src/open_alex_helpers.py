@@ -17,6 +17,7 @@ from sentence_transformers import util
 from src.api_cache_helpers import OpenAlexDailyLimitError
 from src.io_helpers import fetch_supervisors_from_pilot_dataset, remove_illegal_title_characters
 from src.clean_names_helpers import format_name_to_firstname_lastname, name_sanity_check
+from src.dataset_config_helpers import validate_contributor_search_limit
 
 
 _RUN_ID = f"{datetime.now():%Y%m%d-%H%M%S}-pid{getpid()}"
@@ -80,6 +81,7 @@ class AuthorRelations:
         model,
         years_tolerance=0,
         thesis_identifier=None,
+        min_rank_contrib=None,
     ):
         self.integer_id = integer_id
         self.thesis_identifier = thesis_identifier
@@ -98,7 +100,13 @@ class AuthorRelations:
         self.year = year
         self.institution = institution
         self.phd_publications = [] # OpenAlex data for the works of the author with the OpenAlex ID we identified for the PhD candidate
-        self.contributors = contributors
+        # Retain source ranks; plain name lists remain supported for direct callers.
+        self.contributors = []
+        for index, contributor in enumerate(contributors, start=1):
+            rank, name = (index, contributor) if isinstance(contributor, str) else contributor
+            if isinstance(name, str) and name.strip():
+                self.contributors.append((rank, name))
+        self.min_rank_contrib = validate_contributor_search_limit(min_rank_contrib)
         self.years_tolerance = years_tolerance
         self.phd_candidate = None
         self.phd_match_by = None
@@ -550,7 +558,62 @@ class AuthorRelations:
             'shared_work_ids': [],
             'is_thesis_coauthor': False,
             'candidate_evidence': [],
+            'contributor_lookup_method': 'not_searched',
         }
+
+    def _match_local_coauthor(self, supervisor_data, qualifying_authorships):
+        """Choose the listed name's best supported identity without any requests."""
+        candidates = {}
+        source_name = supervisor_data['contributor_name_narcis']
+        phd_id = _openalex_author_id(self.phd_candidate.get('id'))
+        phd_orcid = _orcid_id(self.phd_candidate.get('orcid'))
+        for work, author in qualifying_authorships:
+            name = author.get('display_name')
+            if not isinstance(name, str) or not name.strip():
+                continue
+            author_id = _openalex_author_id(author.get('id'))
+            orcid = _orcid_id(author.get('orcid'))
+            if (author_id and author_id == phd_id) or (orcid and orcid == phd_orcid):
+                continue
+            identity = ('author', author_id) if author_id else ('orcid', orcid) if orcid else None
+            if identity is None or not name_sanity_check(source_name, name):
+                continue
+            candidate = candidates.setdefault(identity, {
+                'profile': {'id': author.get('id') if author_id else None,
+                            'display_name': name, 'orcid': None},
+                'works': {},
+            })
+            if orcid and not candidate['profile']['orcid']:
+                candidate['profile']['orcid'] = author['orcid']
+            work_key = work['work_id'].rsplit('/', 1)[-1]
+            candidate['works'].setdefault(work_key, work)
+
+        supervisor_data['contributor_lookup_method'] = 'local_coauthor'
+        supervisor_data['name_matches_open_alex'] = list(dict.fromkeys(
+            candidate['profile']['display_name'] for candidate in candidates.values()
+        ))
+        if not candidates:
+            return
+        # Dict insertion order preserves the first matching authorship on ties.
+        selected = max(candidates.values(), key=lambda candidate: len(candidate['works']))
+        profile = selected['profile']
+        works = list(selected['works'].values())
+        work_ids = [work['work_id'] for work in works]
+        supervisor_data.update({
+            'supervisor': [profile],
+            'supervisor_confirmed': True,
+            'sup_match_by': 'Qualifying shared publication.',
+            'n_shared_pubs': len(work_ids),
+            'shared_work_ids': work_ids,
+            'shared_pubs': sorted({work['doi'] for work in works
+                                   if isinstance(work.get('doi'), str) and work['doi'].strip()}),
+            'is_thesis_coauthor': self.thesis_id in work_ids,
+            'candidate_evidence': [{
+                'id': profile['id'], 'name': profile['display_name'],
+                'orcid': profile['orcid'], 'support_reasons': ['publication'],
+                'qualifying_work_ids': work_ids,
+            }],
+        })
         
     
     def collect_supervision_metadata(self):
@@ -571,6 +634,8 @@ class AuthorRelations:
         profiles passing the name check, including via an alternative name.
         Shared publications and thesis coauthorship use the authorships already
         returned with the PhD's works; no contributor works queries are needed.
+        Later source ranks use only matching coauthor names on qualifying works,
+        selecting the identity with most distinct works and first occurrence on ties.
         
         Every contributor yields a results dictionary, even if not confirmed. Unmatched contributors get placeholder values.
         The following metadata will be collected per contributor:
@@ -603,8 +668,7 @@ class AuthorRelations:
                 "The PhD candidate was not confirmed; contributor names were retained.",
             )
 
-            for idx, contributor_name in enumerate(self.contributors):
-                contributor_rank = idx + 1
+            for contributor_rank, contributor_name in self.contributors:
                 self.potential_supervisors.append(
                     self._init_supervisor_record(contributor_name, contributor_rank)
                 )
@@ -641,36 +705,43 @@ class AuthorRelations:
         works_by_coauthor = publication_indexes["works_by_coauthor"]
         qualifying_works_by_coauthor = publication_indexes["qualifying_works_by_coauthor"]
 
-        for idx, contributor_name in enumerate(self.contributors):
-            contributor_rank = idx + 1
+        for contributor_rank, contributor_name in self.contributors:
             self.active_contributor_name = contributor_name
             self.active_contributor_rank = contributor_rank
             self.logger.debug(f"Processing contributor #{contributor_rank}: {contributor_name}")
             self.log_progress(
                 "CONTRIBUTOR START",
-                f"{contributor_rank}/{len(self.contributors)} | name={contributor_name!r}",
+                f"source rank={contributor_rank} | name={contributor_name!r}",
             )
 
+            supervisor_data = self._init_supervisor_record(contributor_name, contributor_rank)
+            if self.min_rank_contrib and contributor_rank > self.min_rank_contrib:
+                self._match_local_coauthor(
+                    supervisor_data, publication_indexes['qualifying_authorships']
+                )
+                self.potential_supervisors.append(supervisor_data)
+                self.log_progress(
+                    'LOCAL CONTRIBUTOR END',
+                    f"source rank={contributor_rank} | name={contributor_name!r} | "
+                    f"supervisor confirmed={supervisor_data['supervisor_confirmed']}",
+                )
+                continue
+
             # Search for contributors in OpenAlex
+            supervisor_data['contributor_lookup_method'] = 'author_search'
+            self.potential_supervisors.append(supervisor_data)
             openalex_candidates = Authors().search(contributor_name).get(page=1, per_page=100)
             self.logger.debug(
                 f"Found {len(openalex_candidates)} OpenAlex candidates for '{contributor_name}'."
             )
             
-            # Allocate dict for aggregated supervisor data
-            supervisor_data = self._init_supervisor_record(
-                contributor_name=contributor_name,
-                rank=contributor_rank,
-            )
-
             if not openalex_candidates:
                 self.logger.debug(
                     f"No OpenAlex matches for '{contributor_name}'. Adding placeholder entry."
                 )
-                self.potential_supervisors.append(supervisor_data)
                 self.log_progress(
                     "CONTRIBUTOR END",
-                    f"{contributor_rank}/{len(self.contributors)} | "
+                    f"source rank={contributor_rank} | "
                     f"name={contributor_name!r} | supervisor confirmed=no",
                 )
                 continue
@@ -836,17 +907,17 @@ class AuthorRelations:
                     f"Matching criteria not met for '{contributor_name}'."
                 )
                 
-            # Append the data before moving to the next supervisor listed in NARCIS
-            self.potential_supervisors.append(supervisor_data)
             self.log_progress(
                 "CONTRIBUTOR END",
-                f"{contributor_rank}/{len(self.contributors)} | "
+                f"source rank={contributor_rank} | "
                 f"name={contributor_name!r} | "
                 f"supervisor confirmed={'yes' if criteria_met else 'no'}",
             )
 
         self.logger.info(
             f"Processed {len(self.contributors)} contributors; "
+            f"{sum(s['contributor_lookup_method'] == 'author_search' for s in self.potential_supervisors)} API-searched; "
+            f"{sum(s['contributor_lookup_method'] == 'local_coauthor' for s in self.potential_supervisors)} locally examined; "
             f"{sum(1 for s in self.potential_supervisors if s['supervisor_confirmed'])} confirmed supervisors."
         )
         return self.potential_supervisors
@@ -901,6 +972,7 @@ class AuthorRelations:
             'processing_error',
             'candidate_evidence',
             'deduplication_score',
+            'contributor_lookup_method',
         ]
 
         integer_id = self.integer_id
@@ -914,7 +986,10 @@ class AuthorRelations:
         # Create a list of dictionaries for each supervisor
         # Each supervisor is represented by one row in the final dataset
         results_list = []
-        for supervisor_data in self.potential_supervisors:
+        by_rank = {record['contributor_rank']: record for record in self.potential_supervisors}
+        for rank, name in self.contributors:
+            by_rank.setdefault(rank, self._init_supervisor_record(name, rank))
+        for supervisor_data in by_rank.values():
             supervisor = supervisor_data['supervisor']
             # with the implicit merging of all potential contributors, the contributor names and ids become lists
             contributor_name_narcis = supervisor_data["contributor_name_narcis"]
@@ -970,6 +1045,7 @@ class AuthorRelations:
                 'processing_error': self.processing_error,
                 'candidate_evidence': supervisor_data['candidate_evidence'],
                 'deduplication_score': self.deduplication_score,
+                'contributor_lookup_method': supervisor_data['contributor_lookup_method'],
             }
             results_list.append(result_row)
         
@@ -1001,6 +1077,7 @@ class AuthorRelations:
             result_row['processing_error'] = self.processing_error
             result_row['candidate_evidence'] = []
             result_row['deduplication_score'] = self.deduplication_score
+            result_row['contributor_lookup_method'] = 'not_searched'
             # The supervisor-related columns remain None
             results_df = pd.DataFrame([result_row], columns=columns)
         else:
@@ -1028,11 +1105,13 @@ def build_publication_indexes(works: pd.DataFrame, year: int, thesis_title: str)
     non-dissertation types, and titles distinct from the normalized thesis title.
     Qualifying lists contain one record per distinct work ID and coauthor.
     Names and ORCIDs remain grouped by their authorship's author ID.
+    Qualifying authorships also retain missing author IDs for local ORCID fallback.
     """
     works_by_coauthor = {}
     qualifying_works_by_coauthor = {}
     coauthors = {}
     qualifying_seen = {}
+    qualifying_authorships = []
     normalized_thesis_title = normalize_publication_title(thesis_title)
     if not isinstance(works, pd.DataFrame):
         works = pd.DataFrame(works)
@@ -1064,6 +1143,8 @@ def build_publication_indexes(works: pd.DataFrame, year: int, thesis_title: str)
             author = authorship.get("author") if isinstance(authorship, dict) else None
             if not isinstance(author, dict):
                 continue
+            if qualifies:
+                qualifying_authorships.append((work, author))
             author_id = author.get("id")
             if not isinstance(author_id, str) or not author_id.strip():
                 continue
@@ -1086,7 +1167,32 @@ def build_publication_indexes(works: pd.DataFrame, year: int, thesis_title: str)
         "works_by_coauthor": works_by_coauthor,
         "qualifying_works_by_coauthor": qualifying_works_by_coauthor,
         "coauthors": coauthors,
+        "qualifying_authorships": qualifying_authorships,
     }
+
+
+def _openalex_author_id(value):
+    if isinstance(value, str):
+        match = re.fullmatch(r"(?:https?://openalex\.org/)?(A[0-9]+)", value)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _orcid_id(value):
+    if isinstance(value, str):
+        match = re.fullmatch(r"(?:https?://orcid\.org/)?(\d{4}-\d{4}-\d{4}-\d{3}[\dX])", value)
+        if match:
+            return match.group(1)
+    return None
+
+
+def contributor_columns(columns):
+    """Discover contributor columns in numeric source-rank order."""
+    return sorted(
+        (column for column in columns if re.fullmatch(r'contributor_[0-9]+', str(column))),
+        key=lambda column: int(column.split('_')[1]),
+    )
 
 
 def get_authored_works(author_id: str, author_name: str) -> pd.DataFrame:
@@ -1294,6 +1400,7 @@ def find_phd_and_supervisors_in_row(
     model,
     row_number=None,
     total_rows=None,
+    min_rank_contrib=None,
 ):
     """
     Finds author relations information from a DataFrame row.
@@ -1306,6 +1413,8 @@ def find_phd_and_supervisors_in_row(
         model: The model used to validate author matches.
         row_number (int, optional): The one-based position of the active row.
         total_rows (int, optional): The total number of rows being processed.
+        min_rank_contrib (int, optional): Last source rank eligible for name search;
+            None or 0 searches all populated slots.
 
     Returns:
         pd.DataFrame: A DataFrame with columns as specified.
@@ -1317,7 +1426,11 @@ def find_phd_and_supervisors_in_row(
     title = row['title']
     year = int(row['year'])
     institution = row['institution']
-    contributors = [row[f'contributor_{i}'] for i in range(1, 11) if pd.notna(row.get(f'contributor_{i}', None))]
+    contributors = [
+        (int(column.split('_')[1]), row[column])
+        for column in contributor_columns(row.index)
+        if isinstance(row[column], str) and row[column].strip()
+    ]
     
     record_context_token = _CURRENT_RECORD.set(
         {
@@ -1343,6 +1456,7 @@ def find_phd_and_supervisors_in_row(
             model=model,
             years_tolerance=-4, # cf. issue #19
             thesis_identifier=thesis_identifier,
+            min_rank_contrib=min_rank_contrib,
         )
 
         started_at = monotonic()
@@ -1420,7 +1534,7 @@ def find_phd_and_supervisors_in_row(
                 )
             elif author_relations.active_contributor_rank is not None:
                 contributor_rank = author_relations.active_contributor_rank
-                later_contributors = len(contributors) - contributor_rank
+                later_contributors = sum(rank > contributor_rank for rank, _ in contributors)
                 if later_contributors:
                     contributor_label = (
                         "contributor"
@@ -1435,14 +1549,14 @@ def find_phd_and_supervisors_in_row(
                     skipped_contributors = "Data for this contributor was skipped"
                 skipped_content_message = (
                     "The OpenAlex request did not complete after retries while checking "
-                    f"contributor {contributor_rank}/{len(contributors)} "
+                    f"contributor at source rank {contributor_rank} "
                     f"{author_relations.active_contributor_name!r}. "
                     f"{skipped_contributors}; already completed data for this "
                     "record was retained."
                 )
                 skipped_data_message = (
                     f"OpenAlex API error after retries ({error_type}) while "
-                    f"checking contributor {contributor_rank}/{len(contributors)} "
+                    f"checking contributor at source rank {contributor_rank} "
                     f"{author_relations.active_contributor_name!r}. "
                     f"{skipped_contributors}; already completed data for this "
                     "record was retained."

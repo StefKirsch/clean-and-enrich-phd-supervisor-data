@@ -63,14 +63,14 @@ As of 29 October 2026, [OpenAlex pricing](https://help.openalex.org/access/examp
 
 | Request type | Cost per request | Use in the extraction |
 | --- | ---: | --- |
-| Author-name search (`/authors?search=...`) | $0.001 | One search per PhD, examining the first 10 candidates, and one search per considered contributor, examining up to 100 candidates. Contributor searches run only when the PhD is confirmed. |
+| Author-name search (`/authors?search=...`) | $0.001 | One search per PhD, examining the first 10 candidates, and one search per contributor within the configured source-rank limit, examining up to 100 candidates. Contributor searches run only when the PhD is confirmed. |
 | Filtered works list (`/works?filter=author.id:...`) | $0.0001 | One request per PhD candidate that passes the name check, returning up to 100 works. At most 10 such requests per PhD; no additional pages or contributor works are fetched. |
 
 Single-entity lookups by ID or DOI are free. Fetching an author's works uses the paid filtered-list endpoint above. Thesis-title similarity is computed locally with [SPECTER](https://github.com/allenai/specter). Affiliation and coauthorship checks reuse the returned data without additional API requests.
 
 The current gold-standard sample contains 500 rows, of which 497 have a PhD name and are processed. Assuming two contributors per PhD[^1], a fresh run with no cache hits has this conservative request budget:
 
-[^1]: By default, we retain two contributors per PhD.
+[^1]: By default, only contributor slots 1–2 permit name searches and matching contributor candidates by retrieved Open Alex IDs. Later slots use are matched by coauthorship names based on the already retrieved main author's publications. This method saves API cost while still providing data for later contributors. The name comparison uses a rule-based approach combined with literal matching (c.f. `name_sanity_check()`)
 
 | Extraction step | Requests | API usage cost |
 | --- | ---: | ---: |

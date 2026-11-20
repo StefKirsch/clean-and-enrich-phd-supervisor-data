@@ -2,6 +2,12 @@ import yaml
 import pandas as pd
 from typing import Optional
 
+def validate_contributor_search_limit(value):
+    """Accept an unlimited search or a nonnegative source-rank cutoff."""
+    if value is not None and (type(value) is not int or value < 0):
+        raise ValueError("min_rank_contrib must be None or a nonnegative integer.")
+    return value
+
 def read_config(config_path: str) -> dict:
     """
     Reads a YAML configuration file.
@@ -18,6 +24,8 @@ def read_config(config_path: str) -> dict:
     print(f"Reading configuration from {config_path}...")
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
+
+    validate_contributor_search_limit(config.get('min_rank_contrib'))
         
     if config.get('use_sample_for_gold_standard', None):
         output_filename = config.get('output_filename_gold_standard')

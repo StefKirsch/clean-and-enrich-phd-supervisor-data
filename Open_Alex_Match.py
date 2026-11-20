@@ -25,6 +25,7 @@ from tqdm import tqdm
 from src.unabbreviate_institutions import unabbreviate_institutions
 from src.open_alex_helpers import (
     AuthorRelations,
+    contributor_columns,
     find_phd_and_supervisors_in_row,
     get_supervisors_openalex_ids,
     remove_duplicate_phd_candidates
@@ -120,10 +121,10 @@ data_config = read_config(data_config_path)
 # Get the file name for the output file
 output_filename = data_config['output_filename'] or None
 
-# Rank after which we cut of contributors.
+# Last source rank eligible for contributor-name searches.
 min_rank_contrib = data_config['min_rank_contrib'] or None
 if min_rank_contrib:
-    print(f"Considering the first {min_rank_contrib} contributors per PhD candidate.")
+    print(f"Searching contributor source ranks 1–{min_rank_contrib}; examining later slots locally.")
 else:
     print(f"Considering all contributors.")
 
@@ -146,10 +147,12 @@ pubs_unabbrev_df
 # %%
 # We are flagging PhDs that have more than 4 contributors. For diagnostics only.
 min_n_contributors_to_flag = 4
-contributor_cols = pubs_unabbrev_df.filter(like="contributor_").columns
+contributor_cols = contributor_columns(pubs_unabbrev_df.columns)
 
 # Count non-missing contributor entries per row
-pubs_unabbrev_df['contributor_count'] = pubs_unabbrev_df[contributor_cols].notna().sum(axis=1)
+pubs_unabbrev_df['contributor_count'] = pubs_unabbrev_df[contributor_cols].apply(
+    lambda column: column.map(lambda value: isinstance(value, str) and bool(value.strip()))
+).sum(axis=1)
 
 # Reorder columns to place contributor_count after institution
 cols = list(pubs_unabbrev_df.columns)
@@ -171,19 +174,10 @@ print(f"There are {pubs_more_than_n_df.shape[0]} PhD candidates with 4 or more s
 pubs_more_than_n_df
 
 # %% [markdown]
-# Remove lower rank contributors, c.f. [#49](https://github.com/StefKirsch/clean-and-enrich-phd-supervisor-data/issues/49).
+# Preserve every source contributor for API search or local coauthor matching.
 
 # %%
 pubs_high_contrib_df = pubs_unabbrev_df.copy()
-
-# Get low ranking contributor columns 
-if min_rank_contrib:
-    low_rank_contrib_cols = [
-        col for col in contributor_cols 
-        if int(col.split('_')[1]) > min_rank_contrib
-    ]
-
-    pubs_high_contrib_df[low_rank_contrib_cols] = pd.NA
 
 pubs_high_contrib_df
 
@@ -258,6 +252,7 @@ with tqdm(
                 model,
                 row_number=row_number,
                 total_rows=len(pubs_high_contrib_df),
+                min_rank_contrib=min_rank_contrib,
             )
         except OpenAlexDailyLimitError as exc:
             raise SystemExit(
@@ -338,13 +333,17 @@ n_confirmed_phds = (
     .sum()
 )
 
-n_considered_sups = pubs_high_contrib_df[contributor_cols].notna().sum().sum()
+n_considered_sups = extraction_df['contributor_name_narcis'].notna().sum()
+n_api_searched = extraction_df['contributor_lookup_method'].eq('author_search').sum()
+n_locally_examined = extraction_df['contributor_lookup_method'].eq('local_coauthor').sum()
+n_not_searched = n_considered_sups - n_api_searched - n_locally_examined
 
 n_confirmed_sups = extraction_df['contributor_confirmed'].sum()
 
 print(f"Out of {n_phds} PhD candidates, we confirmed {n_confirmed_phds}.")
 
 print(f"Out of {n_considered_sups} considered contributors, we confirmed {n_confirmed_sups} as a supervisor.")
+print(f"Contributors: {n_api_searched} API-searched, {n_locally_examined} locally examined, {n_not_searched} not searched.")
 
 print(f"We managed to find contributors with {extraction_df['n_shared_inst_grad'].sum()} shared institutions and {extraction_df['n_shared_pubs'].sum()} shared publications!")
 
