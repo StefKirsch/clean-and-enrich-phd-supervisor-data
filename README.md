@@ -49,11 +49,13 @@ The matching workflow reduces API usage through the following choices:
 
 - PhD matching checks the first 10 author-name results and retrieves at most 100 works per candidate, without fetching additional pages. OpenAlex charges per request, so increasing the works page from 25 to 100 results adds no API usage cost ([pricing](https://help.openalex.org/access/example-costs/), [page limits](https://help.openalex.org/api/paging/)).
 - Shared-publication and thesis-coauthor checks use the authorships already returned with the selected PhD's works, avoiding separate publication queries for each contributor.
-- Candidates must pass the name check before their works are fetched. Contributor searches are skipped when the PhD is unconfirmed or has no affiliation in the target years.
+- Candidates must pass the name check before their works are fetched. Contributor searches require a confirmed PhD and are limited by `min_rank_contrib` (currently slots 1–2), with one page of up to 100 profiles per contributor.
 - API responses are cached locally, and an existing pilot-supervisor lookup is loaded from disk to avoid repeating requests.
 - Sampling, contributor selection, and gold-standard mode in [dataset_config.yaml](dataset_config.yaml) allow smaller runs before processing the full dataset.
 
 Limiting retrieval reduces requests but can miss matching evidence outside the fetched works and authorships.
+
+For source-listed contributors, retain all profiles that pass `name_sanity_check()` through their primary or alternative name and satisfy either the existing affiliation requirements or qualifying publication support, deduplicated by author ID. A qualifying retrieved PhD work lists the contributor's ID, has a valid work ID, falls between graduation − 4 and graduation + 1 inclusive, is not a `dissertation`, and has a normalized title different from the thesis title. Distinct work IDs count once; publication support requires neither a DOI nor affiliations and makes no additional requests.
 
 ### OpenAlex API pricing
 
@@ -61,7 +63,7 @@ As of 29 October 2026, [OpenAlex pricing](https://help.openalex.org/access/examp
 
 | Request type | Cost per request | Use in the extraction |
 | --- | ---: | --- |
-| Author-name search (`/authors?search=...`) | $0.001 | One search per PhD, examining the first 10 candidates, and one search per considered contributor, examining up to 100 candidates. Contributor searches run only when the PhD is confirmed and has an affiliation in the target years. |
+| Author-name search (`/authors?search=...`) | $0.001 | One search per PhD, examining the first 10 candidates, and one search per considered contributor, examining up to 100 candidates. Contributor searches run only when the PhD is confirmed. |
 | Filtered works list (`/works?filter=author.id:...`) | $0.0001 | One request per PhD candidate that passes the name check, returning up to 100 works. At most 10 such requests per PhD; no additional pages or contributor works are fetched. |
 
 Single-entity lookups by ID or DOI are free. Fetching an author's works uses the paid filtered-list endpoint above. Thesis-title similarity is computed locally with [SPECTER](https://github.com/allenai/specter). Affiliation and coauthorship checks reuse the returned data without additional API requests.

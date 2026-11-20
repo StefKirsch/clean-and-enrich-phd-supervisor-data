@@ -1,6 +1,9 @@
 import logging
+import re
+import unicodedata
 from contextvars import ContextVar
 from datetime import datetime
+from html import unescape
 from logging.handlers import RotatingFileHandler
 from os import getpid, path, makedirs
 from time import monotonic
@@ -100,6 +103,7 @@ class AuthorRelations:
         self.phd_candidate = None
         self.phd_match_by = None
         self.potential_supervisors = []
+        self.deduplication_score = 0
         self.processing_error = None
         self.progress_step = 0
         self.current_progress_event = None
@@ -512,7 +516,7 @@ class AuthorRelations:
             
             affiliation_years = affiliation.get('years', [])
             
-            if not in_target_years or self.affiliation_target_years.intersection(affiliation_years):
+            if not in_target_years or set(self.affiliation_target_years).intersection(affiliation_years):
                 institutions.add(institution_name)
         
         if not must_be_dutch or dutch_institution:
@@ -545,6 +549,7 @@ class AuthorRelations:
             'shared_pubs': [],
             'shared_work_ids': [],
             'is_thesis_coauthor': False,
+            'candidate_evidence': [],
         }
         
     
@@ -552,13 +557,16 @@ class AuthorRelations:
         """
         Based on relationships between `self.phd_candidate` and contributors collect metadata that indicates supervision. 
         
-        Search the first 100 OpenAlex contributor-name results and retain candidates
-        whose main name or an alternative name passes the name sanity check
-        and share an affiliation with the PhD in the target years, subject to the Dutch-affiliation check.
-        Merge identities and confirmed publication metadata only across these eligible candidates.
-        If no candidate shares an affiliation, retain publication evidence from
-        name-matched profiles without confirming the contributor. This also applies
-        when the confirmed PhD has no affiliation recorded in the target years.
+        Search the first 100 OpenAlex contributor-name results for each source
+        contributor supplied within the configured rank limit. Retain all profiles
+        passing the name sanity check and either the shared-affiliation requirements
+        (including the Dutch-affiliation check) or qualifying publication support.
+        Publication support requires a distinct, valid work ID, a year from
+        graduation - 4 through graduation + 1, a non-dissertation type, and a
+        normalized title different from the thesis title. It needs no affiliation.
+        Merge identities and shared-publication metadata across retained profiles.
+        If none qualify, retain shared-publication evidence from name matches
+        without confirming the contributor.
         'name_matches_open_alex' separately records the canonical names of all
         profiles passing the name check, including via an alternative name.
         Shared publications and thesis coauthorship use the authorships already
@@ -578,9 +586,11 @@ class AuthorRelations:
         'shared_pubs': List of shared nonempty publication DOIs -> list
         'shared_work_ids': List of distinct shared OpenAlex work IDs -> list
         'is_thesis_coauthor': True if any candidate coauthored the thesis -> bool
+        'candidate_evidence': Retained profile identities, support reasons and qualifying work IDs -> list
         """
         
         self.potential_supervisors = []
+        self.deduplication_score = 0
 
         # Case 1: PhD candidate not confirmed
         if not self.phd_candidate or not self.phd_match_by:
@@ -606,16 +616,15 @@ class AuthorRelations:
             self.phd_candidate, in_target_years=True
         )
         
-        # Missing affiliations prevent confirmation, but not coauthorship checks.
         if not phd_affiliations_at_graduation:
             self.logger.warning(
                 "PhD candidate has no affiliations in target years. "
-                "Checking shared publications only; contributors cannot be confirmed."
+                "Checking qualifying shared publications for contributor support."
             )
             self.log_progress(
                 "PUBLICATION EVIDENCE ONLY",
                 "No affiliation was found around graduation; checking coauthorship "
-                "without confirming contributors.",
+                "for publication-supported contributors.",
             )
 
         # Search contributors for every confirmed PhD, including those without affiliations.
@@ -626,17 +635,11 @@ class AuthorRelations:
         self.logger.info("Searching for potential supervisors among contributors.")
 
         self.potential_supervisors = []
-        # Index the fetched PhD works once for all contributors. OpenAlex returns
-        # at most 100 authorships per work; accept that limit without extra calls.
-        works_by_coauthor = {}
-        for work in self.phd_publications.to_dict("records"):
-            authorships = work.get("authorships")
-            if not isinstance(authorships, list):
-                continue
-            for authorship in authorships:
-                coauthor_id = (authorship.get("author") or {}).get("id")
-                if coauthor_id:
-                    works_by_coauthor.setdefault(coauthor_id, []).append(work)
+        publication_indexes = build_publication_indexes(
+            self.phd_publications, self.year, self.title
+        )
+        works_by_coauthor = publication_indexes["works_by_coauthor"]
+        qualifying_works_by_coauthor = publication_indexes["qualifying_works_by_coauthor"]
 
         for idx, contributor_name in enumerate(self.contributors):
             contributor_rank = idx + 1
@@ -672,23 +675,19 @@ class AuthorRelations:
                 )
                 continue
 
-            # Identify candidates with a plausible name and a shared affiliation.
-            
-            # Create placeholder data that we are also using if we don't confirm the supervisor
             name_matches_open_alex = [] # Name match with OpenAlex
-            matched_candidates = []
+            affiliation_candidates = {}
+            publication_candidates = {}
+            support_reasons = {}
             shared_pub_union = set()
             shared_work_union = set()
             name_matched_pub_union = set()
             name_matched_work_union = set()
             all_shared_affils = set()
-            coauthorship_flag = False
             same_grad_inst_flag = False
             pilot_flag = False
-            thesis_coauthor_flag = False
 
-            # OpenAlex may split one author across multiple profiles. Only profiles
-            # passing both checks contribute identities and confirmed metadata.
+            # Keep every compatible profile supported by either branch.
             for candidate in openalex_candidates:
                 
                 # OpenAlex may find a profile via an alternative spelling or surname.
@@ -704,79 +703,110 @@ class AuthorRelations:
                 ):
                     continue
                 
-                name_matches_open_alex.append(candidate['display_name'])
+                if candidate['display_name'] not in name_matches_open_alex:
+                    name_matches_open_alex.append(candidate['display_name'])
 
-                # Collect coauthorship before requiring an affiliation. Use this
-                # broader evidence only if no profile qualifies for confirmation.
-                shared_works = [
-                    work for work in works_by_coauthor.get(candidate['id'], [])
-                    if isinstance(work['work_id'], str) and work['work_id'].strip()
-                ]
+                candidate_id = candidate.get('id')
+                if not isinstance(candidate_id, str) or not candidate_id.strip():
+                    continue
+
+                shared_works = works_by_coauthor.get(candidate_id, [])
                 shared_work_ids = {work['work_id'] for work in shared_works}
                 shared_pubs = {
                     work['doi'] for work in shared_works
-                    if isinstance(work['doi'], str) and work['doi'].strip()
+                    if isinstance(work.get('doi'), str) and work['doi'].strip()
                 }
                 name_matched_work_union.update(shared_work_ids)
                 name_matched_pub_union.update(shared_pubs)
 
-                # Affiliations
+                # Factual affiliation flags are separate from branch eligibility.
                 cand_affils = self.get_candidate_affiliations(
-                    candidate, in_target_years=True, must_be_dutch=True
+                    candidate, in_target_years=True
                 )
                 shared_affils = phd_affiliations_at_graduation.intersection(cand_affils)
+                affiliation_supported = bool(
+                    phd_affiliations_at_graduation.intersection(
+                        self.get_candidate_affiliations(
+                            candidate, in_target_years=True, must_be_dutch=True
+                        )
+                    )
+                )
+                qualifying_works = qualifying_works_by_coauthor.get(candidate_id, [])
+                publication_supported = bool(qualifying_works)
 
-                if not shared_affils:
+                if not affiliation_supported and not publication_supported:
                     self.logger.debug(
-                        f"Name match '{candidate['display_name']}' has no shared "
-                        f"affiliation in the target years; retaining {len(shared_work_ids)} "
+                        f"Name match '{candidate['display_name']}' lacks qualifying "
+                        f"support; retaining {len(shared_work_ids)} "
                         "shared publications as unconfirmed evidence."
                     )
                     continue
 
-                matched_candidates.append(candidate)
+                reasons = support_reasons.setdefault(candidate_id, [])
+                if affiliation_supported:
+                    affiliation_candidates.setdefault(candidate_id, candidate)
+                    if "affiliation" not in reasons:
+                        reasons.append("affiliation")
+                if publication_supported:
+                    publication_candidates.setdefault(candidate_id, candidate)
+                    if "publication" not in reasons:
+                        reasons.append("publication")
                 all_shared_affils.update(shared_affils)
 
                 # Confirmed publication metadata uses only eligible profiles.
                 shared_work_union.update(shared_work_ids)
                 shared_pub_union.update(shared_pubs)
 
-                if len(shared_work_union) >= self.n_shared_pubs_min:
-                    coauthorship_flag = True
-
-                if self.thesis_id is not None and any(
-                    work['work_id'] == self.thesis_id for work in shared_works
-                ):
-                    thesis_coauthor_flag = True
-
                 if self.institution in shared_affils:
                     same_grad_inst_flag = True
 
-                if candidate['id'] in self.__class__.supervisors_in_pilot_dataset.values():
+                if candidate_id in self.__class__.supervisors_in_pilot_dataset.values():
                     pilot_flag = True
                 
                 self.logger.debug(
                     f"Processing name match '{candidate['display_name']}' for NARCIS name '{contributor_name}': "
                     f"{len(shared_work_ids)} shared publications, "
-                    f"{'thesis coauthor' if thesis_coauthor_flag else 'not thesis coauthor'}, "
                     f"{'same graduation institution' if same_grad_inst_flag else 'not same graduation institution'}, and "
                     f"{'in pilot dataset' if pilot_flag else 'not in pilot dataset'}"
                 )
 
-            # Check match criteria
-            # criteria_met = coauthorship_flag # We require at least one shared publication.
-            # sup_match_by = f"Name match and ≥ {self.n_shared_pubs_min} shared publication(s)."
-            
-            # criteria_met = same_grad_inst_flag # We require that both are affiliated with the institution in NARCIS at graduation
-            # sup_match_by = "Affiliated with NARCIS institution at graduation."
-            
-            criteria_met = bool(len(all_shared_affils)) # We require at least one shared affiliation in the target years around graduation
-            sup_match_by = "Shared affiliation at graduation."
+            retained_candidates = dict(affiliation_candidates)
+            for candidate_id, candidate in publication_candidates.items():
+                retained_candidates.setdefault(candidate_id, candidate)
+            matched_candidates = list(retained_candidates.values())
+            criteria_met = bool(matched_candidates)
+
+            # One point per API-searched slot satisfying the affiliation branch.
+            self.deduplication_score += bool(affiliation_candidates)
+            if affiliation_candidates and publication_candidates:
+                sup_match_by = "Shared affiliation at graduation and qualifying shared publication."
+            elif affiliation_candidates:
+                sup_match_by = "Shared affiliation at graduation."
+            elif publication_candidates:
+                sup_match_by = "Qualifying shared publication."
+            else:
+                sup_match_by = ""
 
             if not criteria_met:
                 shared_work_union = name_matched_work_union
                 shared_pub_union = name_matched_pub_union
-                thesis_coauthor_flag = self.thesis_id in shared_work_union
+
+            thesis_coauthor_flag = (
+                self.thesis_id is not None and self.thesis_id in shared_work_union
+            )
+            candidate_evidence = [
+                {
+                    "id": candidate_id,
+                    "name": candidate['display_name'],
+                    "orcid": candidate.get('orcid'),
+                    "support_reasons": support_reasons[candidate_id],
+                    "qualifying_work_ids": [
+                        work['work_id']
+                        for work in qualifying_works_by_coauthor.get(candidate_id, [])
+                    ],
+                }
+                for candidate_id, candidate in retained_candidates.items()
+            ]
             
             # Fill aggregated values
             supervisor_data.update({
@@ -790,6 +820,7 @@ class AuthorRelations:
                 "shared_work_ids":            sorted(shared_work_union),
                 "is_thesis_coauthor":         thesis_coauthor_flag,
                 "supervisor_confirmed":       criteria_met,
+                "candidate_evidence":         candidate_evidence,
                 "sup_match_by": (
                     sup_match_by if criteria_met else ''
                 ),
@@ -868,6 +899,8 @@ class AuthorRelations:
             'shared_work_ids',
             'is_thesis_coauthor',
             'processing_error',
+            'candidate_evidence',
+            'deduplication_score',
         ]
 
         integer_id = self.integer_id
@@ -889,7 +922,7 @@ class AuthorRelations:
             contributor_confirmed = supervisor_data["supervisor_confirmed"]
             contributor_name = [supervisor_nested['display_name'] for supervisor_nested in supervisor]
             contributor_id = [supervisor_nested['id'] for supervisor_nested in supervisor]
-            contributor_orcid = [supervisor_nested['orcid'] for supervisor_nested in supervisor]
+            contributor_orcid = [supervisor_nested.get('orcid') for supervisor_nested in supervisor]
             sup_match_by = supervisor_data['sup_match_by']
             contributor_rank = supervisor_data['contributor_rank']
             same_grad_inst = supervisor_data['same_grad_inst']
@@ -935,6 +968,8 @@ class AuthorRelations:
                 'shared_work_ids': shared_work_ids,
                 'is_thesis_coauthor': is_thesis_coauthor,
                 'processing_error': self.processing_error,
+                'candidate_evidence': supervisor_data['candidate_evidence'],
+                'deduplication_score': self.deduplication_score,
             }
             results_list.append(result_row)
         
@@ -964,12 +999,94 @@ class AuthorRelations:
             result_row['phd_match_score'] = self.phd_match_score
             result_row['phd_match_by'] = self.phd_match_by
             result_row['processing_error'] = self.processing_error
+            result_row['candidate_evidence'] = []
+            result_row['deduplication_score'] = self.deduplication_score
             # The supervisor-related columns remain None
             results_df = pd.DataFrame([result_row], columns=columns)
         else:
             results_df = pd.DataFrame(results_list, columns=columns)
 
         return results_df
+
+
+def normalize_publication_title(title: str) -> str:
+    """Fold HTML entities, case, accents, punctuation and whitespace for equality."""
+    if not isinstance(title, str):
+        return ""
+    folded = unicodedata.normalize("NFKD", unescape(title).casefold())
+    return " ".join("".join(
+        character if character.isalnum() else " "
+        for character in folded if not unicodedata.combining(character)
+    ).split())
+
+
+def build_publication_indexes(works: pd.DataFrame, year: int, thesis_title: str) -> dict:
+    """Index fetched works and author identities locally in API retrieval order.
+
+    Shared-work lists retain all nonempty work IDs and their DOI metadata.
+    Qualifying lists require OpenAlex work IDs, graduation - 4 through + 1,
+    non-dissertation types, and titles distinct from the normalized thesis title.
+    Qualifying lists contain one record per distinct work ID and coauthor.
+    Names and ORCIDs remain grouped by their authorship's author ID.
+    """
+    works_by_coauthor = {}
+    qualifying_works_by_coauthor = {}
+    coauthors = {}
+    qualifying_seen = {}
+    normalized_thesis_title = normalize_publication_title(thesis_title)
+    if not isinstance(works, pd.DataFrame):
+        works = pd.DataFrame(works)
+    if "retrieval_order" in works:
+        works = works.sort_values("retrieval_order", kind="stable")
+
+    for work in works.to_dict("records"):
+        authorships = work.get("authorships")
+        if not isinstance(authorships, list):
+            continue
+        work_id = work.get("work_id")
+        has_work_id = isinstance(work_id, str) and bool(work_id.strip())
+        valid_work_id = (
+            re.fullmatch(r"(?:https?://openalex\.org/)?(W[0-9]+)", work_id)
+            if has_work_id else None
+        )
+        publication_year = pd.to_numeric(work.get("publication_year"), errors="coerce")
+        work_type = work.get("type")
+        is_dissertation = isinstance(work_type, str) and work_type == "dissertation"
+        qualifies = bool(
+            valid_work_id
+            and pd.notna(publication_year)
+            and year - 4 <= publication_year <= year + 1
+            and not is_dissertation
+            and normalize_publication_title(work.get("title")) != normalized_thesis_title
+        )
+        seen_authors = set()
+        for authorship in authorships:
+            author = authorship.get("author") if isinstance(authorship, dict) else None
+            if not isinstance(author, dict):
+                continue
+            author_id = author.get("id")
+            if not isinstance(author_id, str) or not author_id.strip():
+                continue
+            identity = coauthors.setdefault(author_id, {"id": author_id, "names": [], "orcids": []})
+            for field, key in (("display_name", "names"), ("orcid", "orcids")):
+                value = author.get(field)
+                if isinstance(value, str) and value.strip() and value not in identity[key]:
+                    identity[key].append(value)
+
+            if author_id in seen_authors:
+                continue
+            seen_authors.add(author_id)
+            if has_work_id:
+                works_by_coauthor.setdefault(author_id, []).append(work)
+            if qualifies and valid_work_id.group(1) not in qualifying_seen.setdefault(author_id, set()):
+                qualifying_works_by_coauthor.setdefault(author_id, []).append(work)
+                qualifying_seen[author_id].add(valid_work_id.group(1))
+
+    return {
+        "works_by_coauthor": works_by_coauthor,
+        "qualifying_works_by_coauthor": qualifying_works_by_coauthor,
+        "coauthors": coauthors,
+    }
 
 
 def get_authored_works(author_id: str, author_name: str) -> pd.DataFrame:
@@ -1000,6 +1117,7 @@ def get_authored_works(author_id: str, author_name: str) -> pd.DataFrame:
     # Add the authorship of the author we're looking at
     works.insert(0, "author_id", author_id)
     works.insert(1, "author_name", author_name)
+    works["retrieval_order"] = range(len(works))
     
     return works
 
@@ -1096,7 +1214,9 @@ def remove_duplicate_phd_candidates(extraction_df: pd.DataFrame) -> pd.DataFrame
     unconfirmed source records retain all their contributor rows even if they
     share a tentative identity with another record. Prefer ORCIDs for identifying
     confirmed candidates and use OpenAlex IDs when no ORCID is available. For
-    duplicates, keep the integer ID with the most confirmed contributors. Ties
+    duplicates, keep the integer ID with the highest per-thesis deduplication_score:
+    API-searched contributor slots satisfying the name-and-affiliation branch.
+    Inputs without that field use confirmed-contributor counts. Ties
     are resolved by keeping the first integer ID. Add all duplicate source-record
     metadata, PhD names, and OpenAlex IDs to the retained candidate for diagnostics.
     """
@@ -1106,9 +1226,11 @@ def remove_duplicate_phd_candidates(extraction_df: pd.DataFrame) -> pd.DataFrame
     candidates["duplicate_id"] = (
         candidates["phd_orcid"].replace("", pd.NA).fillna(candidates["phd_id"])
     )
-    candidates["n_confirmed_contributors"] = candidates["integer_id"].map(
-        extraction_df.groupby("integer_id", sort=False)["contributor_confirmed"].sum()
-    )
+    if "deduplication_score" in extraction_df:
+        selection_scores = extraction_df.groupby("integer_id", sort=False)["deduplication_score"].first()
+    else:
+        selection_scores = extraction_df.groupby("integer_id", sort=False)["contributor_confirmed"].sum()
+    candidates["selection_score"] = candidates["integer_id"].map(selection_scores)
 
     confirmed = candidates["phd_match_by"].fillna("").astype(str).str.strip().ne("")
     candidates_with_id = candidates[confirmed & candidates["duplicate_id"].notna()]
@@ -1119,7 +1241,7 @@ def remove_duplicate_phd_candidates(extraction_df: pd.DataFrame) -> pd.DataFrame
         if len(duplicate_candidates) == 1:
             continue
 
-        kept_index = duplicate_candidates["n_confirmed_contributors"].idxmax()
+        kept_index = duplicate_candidates["selection_score"].idxmax()
         kept_candidate = duplicate_candidates.loc[[kept_index]]
         removed_candidates = duplicate_candidates.drop(index=kept_index)
         ordered_candidates = pd.concat([kept_candidate, removed_candidates])
